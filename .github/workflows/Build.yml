@@ -20,6 +20,7 @@ jobs:
           sudo apt update
           sudo apt install -y build-essential clang pkg-config libssl-dev protobuf-compiler \
                               cmake gcc-arm-linux-gnueabihf postgresql-client
+          cargo install --force --locked bindgen-cli  # Fix for aws-lc-sys error
 
       - name: Install Rust and ARMv7 target
         run: |
@@ -36,3 +37,4 @@ jobs:
         with:
           name: lemmy-armv7-unknown-linux-gnueabihf
           path: target/armv7-unknown-linux-gnueabihf/release/lemmy
+          

@@ -1,4 +1,4 @@
-name: Build Lemmy Binaries
+name: Build Lemmy for ARMv8 32-bit
 
 on:
   push:
@@ -8,32 +8,32 @@ on:
 
 jobs:
   build:
-    name: Build Lemmy
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        target: [aarch64-unknown-linux-gnu]
-    
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: true
 
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        targets: ${{ matrix.target }}
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential clang pkg-config libssl-dev protobuf-compiler \
+                              cmake gcc-aarch64-linux-gnu postgresql-client
 
-    - name: Install dependencies
-      run: |
-        sudo apt update
-        sudo apt install -y build-essential clang pkg-config libssl-dev gcc-aarch64-linux-gnu
+      - name: Install Rust and ARMv8 32-bit target
+        run: |
+          rustup update stable
+          rustup default stable
+          rustup target add armv8-unknown-linux-gnueabihf
 
-    - name: Build Lemmy
-      run: |
-        cargo build --release --target ${{ matrix.target }} --verbose
+      - name: Build Lemmy
+        run: |
+          cargo build --release --target armv8-unknown-linux-gnueabihf
 
-    - name: Upload binaries
-      uses: actions/upload-artifact@v4
-      with:
-        name: lemmy-${{ matrix.target }}
-        path: target/${{ matrix.target }}/release/lemmy
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lemmy-armv8-unknown-linux-gnueabihf
+          path: target/armv8-unknown-linux-gnueabihf/release/lemmy
+          

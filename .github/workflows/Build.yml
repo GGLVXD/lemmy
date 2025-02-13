@@ -30,7 +30,7 @@ jobs:
 
     - name: Build Lemmy
       run: |
-        cargo build --release --target ${{ matrix.target }}
+        cargo build --release --target ${{ matrix.target }} --verbose
 
     - name: Upload binaries
       uses: actions/upload-artifact@v4

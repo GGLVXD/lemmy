@@ -26,7 +26,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt update
-        sudo apt install -y build-essential clang pkg-config libssl-dev
+        sudo apt install -y build-essential clang pkg-config libssl-dev gcc-arm-linux-gnueabihf
 
     - name: Build Lemmy
       run: |

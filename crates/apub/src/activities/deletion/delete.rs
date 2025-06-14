@@ -4,16 +4,17 @@ use crate::{
     generate_activity_id,
   },
   insert_received_activity,
-  objects::person::ApubPerson,
   protocol::{activities::deletion::delete::Delete, IdOrNestedObject},
 };
 use activitypub_federation::{config::Data, kinds::activity::DeleteType, traits::ActivityHandler};
-use lemmy_api_common::context::LemmyContext;
+use lemmy_api_utils::context::LemmyContext;
+use lemmy_apub_objects::objects::person::ApubPerson;
 use lemmy_db_schema::{
   source::{
     comment::{Comment, CommentUpdateForm},
     comment_report::CommentReport,
     community::{Community, CommunityUpdateForm},
+    community_report::CommunityReport,
     mod_log::moderator::{
       ModRemoveComment,
       ModRemoveCommentForm,
@@ -116,6 +117,7 @@ pub(in crate::activities) async fn receive_remove_action(
       if community.local {
         Err(FederationError::OnlyLocalAdminCanRemoveCommunity)?
       }
+      CommunityReport::resolve_all_for_object(&mut context.pool(), community.id, actor.id).await?;
       let form = ModRemoveCommunityForm {
         mod_person_id: actor.id,
         community_id: community.id,

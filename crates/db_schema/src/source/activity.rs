@@ -1,9 +1,10 @@
-use crate::{
-  newtypes::{ActivityId, CommunityId, DbUrl},
+use crate::newtypes::{ActivityId, CommunityId, DbUrl};
+use chrono::{DateTime, Utc};
+use diesel::Queryable;
+use lemmy_db_schema_file::{
+  enums::ActorType,
   schema::{received_activity, sent_activity},
 };
-use chrono::{DateTime, Utc};
-use diesel::{sql_types::Nullable, Queryable};
 use serde_json::Value;
 use std::{collections::HashSet, fmt::Debug};
 use url::Url;
@@ -60,7 +61,7 @@ pub struct SentActivity {
   pub ap_id: DbUrl,
   pub data: Value,
   pub sensitive: bool,
-  pub published: DateTime<Utc>,
+  pub published_at: DateTime<Utc>,
   pub send_inboxes: Vec<Option<DbUrl>>,
   pub send_community_followers_of: Option<CommunityId>,
   pub send_all_instances: bool,
@@ -81,14 +82,6 @@ pub struct SentActivityForm {
   pub actor_apub_id: DbUrl,
 }
 
-#[derive(Clone, Copy, Debug, diesel_derive_enum::DbEnum, PartialEq, Eq)]
-#[ExistingTypePath = "crate::schema::sql_types::ActorTypeEnum"]
-pub enum ActorType {
-  Site,
-  Community,
-  Person,
-}
-
 #[derive(PartialEq, Eq, Debug)]
 #[cfg_attr(feature = "full", derive(Queryable, Selectable, Identifiable))]
 #[cfg_attr(feature = "full", diesel(primary_key(ap_id)))]
@@ -96,5 +89,5 @@ pub enum ActorType {
 #[cfg_attr(feature = "full", diesel(check_for_backend(diesel::pg::Pg)))]
 pub struct ReceivedActivity {
   pub ap_id: DbUrl,
-  pub published: DateTime<Utc>,
+  pub published_at: DateTime<Utc>,
 }

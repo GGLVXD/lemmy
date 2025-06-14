@@ -1,11 +1,8 @@
 use crate::{
-  aliases::creator_community_actions,
   newtypes::{CommunityId, DbUrl, LanguageId, LocalUserId, PersonId},
-  schema::{community, community_actions, local_user, person, registration_application},
   source::{
     actor_language::LocalUserLanguage,
     local_user::{LocalUser, LocalUserInsertForm, LocalUserUpdateForm},
-    local_user_vote_display_mode::{LocalUserVoteDisplayMode, LocalUserVoteDisplayModeInsertForm},
     site::Site,
   },
   utils::{
@@ -14,25 +11,22 @@ use crate::{
     now,
     DbPool,
   },
-  CommunityVisibility,
 };
 use bcrypt::{hash, DEFAULT_COST};
 use diesel::{
   dsl::{insert_into, not, IntervalDsl},
   result::Error,
-  BoolExpressionMethods,
   CombineDsl,
   ExpressionMethods,
   JoinOnDsl,
-  NullableExpressionMethods,
-  PgExpressionMethods,
   QueryDsl,
 };
 use diesel_async::RunQueryDsl;
-use lemmy_utils::{
-  email::{lang_str_to_lang, translations::Lang},
-  error::{LemmyErrorExt, LemmyErrorType, LemmyResult},
+use lemmy_db_schema_file::{
+  enums::CommunityVisibility,
+  schema::{community, community_actions, local_user, person, registration_application},
 };
+use lemmy_utils::error::{LemmyErrorExt, LemmyErrorType, LemmyResult};
 
 impl LocalUser {
   pub async fn create(
@@ -55,10 +49,6 @@ impl LocalUser {
 
     LocalUserLanguage::update(pool, languages, local_user_.id).await?;
 
-    // Create their vote_display_modes
-    let vote_display_mode_form = LocalUserVoteDisplayModeInsertForm::new(local_user_.id);
-    LocalUserVoteDisplayMode::create(pool, &vote_display_mode_form).await?;
-
     Ok(local_user_)
   }
 
@@ -66,7 +56,7 @@ impl LocalUser {
     pool: &mut DbPool<'_>,
     local_user_id: LocalUserId,
     form: &LocalUserUpdateForm,
-  ) -> Result<usize, Error> {
+  ) -> LemmyResult<usize> {
     let conn = &mut get_conn(pool).await?;
     let res = diesel::update(local_user::table.find(local_user_id))
       .set(form)
@@ -77,13 +67,15 @@ impl LocalUser {
       Err(Error::QueryBuilderError(_)) => Ok(0),
       other => other,
     }
+    .with_lemmy_type(LemmyErrorType::CouldntUpdateUser)
   }
 
-  pub async fn delete(pool: &mut DbPool<'_>, id: LocalUserId) -> Result<usize, Error> {
+  pub async fn delete(pool: &mut DbPool<'_>, id: LocalUserId) -> LemmyResult<usize> {
     let conn = &mut *get_conn(pool).await?;
     diesel::delete(local_user::table.find(id))
       .execute(conn)
       .await
+      .with_lemmy_type(LemmyErrorType::Deleted)
   }
 
   pub async fn update_password(
@@ -101,25 +93,27 @@ impl LocalUser {
       .with_lemmy_type(LemmyErrorType::CouldntUpdateUser)
   }
 
-  pub async fn set_all_users_email_verified(pool: &mut DbPool<'_>) -> Result<Vec<Self>, Error> {
+  pub async fn set_all_users_email_verified(pool: &mut DbPool<'_>) -> LemmyResult<Vec<Self>> {
     let conn = &mut get_conn(pool).await?;
     diesel::update(local_user::table)
       .set(local_user::email_verified.eq(true))
       .get_results::<Self>(conn)
       .await
+      .with_lemmy_type(LemmyErrorType::CouldntUpdateUser)
   }
 
   pub async fn set_all_users_registration_applications_accepted(
     pool: &mut DbPool<'_>,
-  ) -> Result<Vec<Self>, Error> {
+  ) -> LemmyResult<Vec<Self>> {
     let conn = &mut get_conn(pool).await?;
     diesel::update(local_user::table)
       .set(local_user::accepted_application.eq(true))
       .get_results::<Self>(conn)
       .await
+      .with_lemmy_type(LemmyErrorType::CouldntUpdateUser)
   }
 
-  pub async fn delete_old_denied_local_users(pool: &mut DbPool<'_>) -> Result<usize, Error> {
+  pub async fn delete_old_denied_local_users(pool: &mut DbPool<'_>) -> LemmyResult<usize> {
     let conn = &mut get_conn(pool).await?;
 
     // Make sure:
@@ -128,7 +122,7 @@ impl LocalUser {
     // - The accepted_application is false
     let old_denied_registrations = registration_application::table
       .filter(registration_application::admin_id.is_not_null())
-      .filter(registration_application::published.lt(now() - 1.week()))
+      .filter(registration_application::published_at.lt(now() - 1.week()))
       .select(registration_application::local_user_id);
 
     // Delete based on join logic is here:
@@ -141,7 +135,10 @@ impl LocalUser {
     // Delete the person rows, which should automatically clear the local_user ones
     let persons = person::table.filter(person::id.eq_any(local_users));
 
-    diesel::delete(persons).execute(conn).await
+    diesel::delete(persons)
+      .execute(conn)
+      .await
+      .with_lemmy_type(LemmyErrorType::Deleted)
   }
 
   pub async fn check_is_email_taken(pool: &mut DbPool<'_>, email: &str) -> LemmyResult<()> {
@@ -160,8 +157,8 @@ impl LocalUser {
   pub async fn export_backup(
     pool: &mut DbPool<'_>,
     person_id_: PersonId,
-  ) -> Result<UserBackupLists, Error> {
-    use crate::schema::{
+  ) -> LemmyResult<UserBackupLists> {
+    use lemmy_db_schema_file::schema::{
       comment,
       comment_actions,
       community,
@@ -175,7 +172,7 @@ impl LocalUser {
     let conn = &mut get_conn(pool).await?;
 
     let followed_communities = community_actions::table
-      .filter(community_actions::followed.is_not_null())
+      .filter(community_actions::followed_at.is_not_null())
       .filter(community_actions::person_id.eq(person_id_))
       .inner_join(community::table)
       .select(community::ap_id)
@@ -183,7 +180,7 @@ impl LocalUser {
       .await?;
 
     let saved_posts = post_actions::table
-      .filter(post_actions::saved.is_not_null())
+      .filter(post_actions::saved_at.is_not_null())
       .filter(post_actions::person_id.eq(person_id_))
       .inner_join(post::table)
       .select(post::ap_id)
@@ -191,7 +188,7 @@ impl LocalUser {
       .await?;
 
     let saved_comments = comment_actions::table
-      .filter(comment_actions::saved.is_not_null())
+      .filter(comment_actions::saved_at.is_not_null())
       .filter(comment_actions::person_id.eq(person_id_))
       .inner_join(comment::table)
       .select(comment::ap_id)
@@ -199,7 +196,7 @@ impl LocalUser {
       .await?;
 
     let blocked_communities = community_actions::table
-      .filter(community_actions::blocked.is_not_null())
+      .filter(community_actions::blocked_at.is_not_null())
       .filter(community_actions::person_id.eq(person_id_))
       .inner_join(community::table)
       .select(community::ap_id)
@@ -207,7 +204,7 @@ impl LocalUser {
       .await?;
 
     let blocked_users = person_actions::table
-      .filter(person_actions::blocked.is_not_null())
+      .filter(person_actions::blocked_at.is_not_null())
       .filter(person_actions::person_id.eq(person_id_))
       .inner_join(person::table.on(person_actions::target_id.eq(person::id)))
       .select(person::ap_id)
@@ -215,7 +212,7 @@ impl LocalUser {
       .await?;
 
     let blocked_instances = instance_actions::table
-      .filter(instance_actions::blocked.is_not_null())
+      .filter(instance_actions::blocked_at.is_not_null())
       .filter(instance_actions::person_id.eq(person_id_))
       .inner_join(instance::table)
       .select(instance::domain)
@@ -284,10 +281,10 @@ impl LocalUser {
       .select(local_user::person_id);
 
     let mods = community_actions::table
-      .filter(community_actions::became_moderator.is_not_null())
+      .filter(community_actions::became_moderator_at.is_not_null())
       .filter(community_actions::community_id.eq(for_community_id))
       .filter(community_actions::person_id.eq_any(&persons))
-      .order_by(community_actions::became_moderator)
+      .order_by(community_actions::became_moderator_at)
       .select(community_actions::person_id);
 
     let res = admins.union_all(mods).get_results::<PersonId>(conn).await?;
@@ -300,33 +297,6 @@ impl LocalUser {
       Err(LemmyErrorType::NotHigherMod)?
     }
   }
-
-  pub fn interface_i18n_language(&self) -> Lang {
-    lang_str_to_lang(&self.interface_language)
-  }
-}
-
-// TODO
-// I'd really like to have these on the impl, but unfortunately they have to be top level,
-// according to https://diesel.rs/guides/composing-applications.html
-/// Checks to see if you can mod an item.
-///
-/// Caveat: Since admin status isn't federated or ordered, it can't know whether
-/// item creator is a federated admin, or a higher admin.
-/// The back-end will reject an action for admin that is higher via
-/// LocalUser::is_higher_mod_or_admin_check
-#[diesel::dsl::auto_type]
-pub fn local_user_can_mod() -> _ {
-  let am_admin = local_user::admin.nullable();
-  let creator_became_moderator = creator_community_actions
-    .field(community_actions::became_moderator)
-    .nullable();
-
-  let am_higher_mod = community_actions::became_moderator
-    .nullable()
-    .le(creator_became_moderator);
-
-  am_admin.or(am_higher_mod).is_not_distinct_from(true)
 }
 
 /// Adds some helper functions for an optional LocalUser

@@ -1,20 +1,10 @@
 use crate::{
-  activities::{
-    generate_activity_id,
-    generate_announce_activity_id,
-    generate_to,
-    send_lemmy_activity,
-    verify_person_in_community,
-    verify_visibility,
-  },
+  activities::{generate_activity_id, generate_announce_activity_id, send_lemmy_activity},
   activity_lists::AnnouncableActivities,
   insert_received_activity,
-  objects::community::ApubCommunity,
   protocol::{
     activities::community::announce::{AnnounceActivity, RawAnnouncableActivities},
-    Id,
     IdOrNestedObject,
-    InCommunity,
   },
 };
 use activitypub_federation::{
@@ -22,11 +12,15 @@ use activitypub_federation::{
   kinds::activity::AnnounceType,
   traits::{ActivityHandler, Actor},
 };
-use lemmy_api_common::context::LemmyContext;
-use lemmy_db_schema::{
-  source::{activity::ActivitySendTargets, community::CommunityFollower},
-  CommunityVisibility,
+use lemmy_api_utils::context::LemmyContext;
+use lemmy_apub_objects::{
+  objects::community::ApubCommunity,
+  utils::{
+    functions::{generate_to, verify_person_in_community, verify_visibility},
+    protocol::{Id, InCommunity},
+  },
 };
+use lemmy_db_schema::source::{activity::ActivitySendTargets, community::CommunityActions};
 use lemmy_utils::error::{FederationError, LemmyError, LemmyErrorType, LemmyResult};
 use serde_json::Value;
 use url::Url;
@@ -211,11 +205,11 @@ async fn can_accept_activity_in_community(
 ) -> LemmyResult<()> {
   if let Some(community) = community {
     // Local only community can't federate
-    if community.visibility == CommunityVisibility::LocalOnly {
+    if !community.visibility.can_federate() {
       return Err(LemmyErrorType::NotFound.into());
     }
     if !community.local {
-      CommunityFollower::check_has_local_followers(&mut context.pool(), community.id).await?
+      CommunityActions::check_has_local_followers(&mut context.pool(), community.id).await?
     }
   }
   Ok(())

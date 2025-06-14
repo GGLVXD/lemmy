@@ -1,16 +1,8 @@
 use crate::{
-  activities::{
-    community::send_activity_in_community,
-    generate_activity_id,
-    generate_to,
-    verify_mod_action,
-    verify_person_in_community,
-    verify_visibility,
-  },
+  activities::{community::send_activity_in_community, generate_activity_id, verify_mod_action},
   activity_lists::AnnouncableActivities,
   insert_received_activity,
-  objects::{community::ApubCommunity, person::ApubPerson, post::ApubPost},
-  protocol::{activities::community::collection_remove::CollectionRemove, InCommunity},
+  protocol::activities::community::collection_remove::CollectionRemove,
 };
 use activitypub_federation::{
   config::Data,
@@ -18,15 +10,22 @@ use activitypub_federation::{
   kinds::activity::RemoveType,
   traits::{ActivityHandler, Actor},
 };
-use lemmy_api_common::{
+use lemmy_api_utils::{
   context::LemmyContext,
   utils::{generate_featured_url, generate_moderators_url},
+};
+use lemmy_apub_objects::{
+  objects::{community::ApubCommunity, person::ApubPerson, post::ApubPost},
+  utils::{
+    functions::{generate_to, verify_person_in_community, verify_visibility},
+    protocol::InCommunity,
+  },
 };
 use lemmy_db_schema::{
   impls::community::CollectionType,
   source::{
     activity::ActivitySendTargets,
-    community::{Community, CommunityModerator, CommunityModeratorForm},
+    community::{Community, CommunityActions, CommunityModeratorForm},
     mod_log::moderator::{ModAddCommunity, ModAddCommunityForm},
     post::{Post, PostUpdateForm},
   },
@@ -124,11 +123,8 @@ impl ActivityHandler for CollectionRemove {
           .dereference(context)
           .await?;
 
-        let form = CommunityModeratorForm {
-          community_id: community.id,
-          person_id: remove_mod.id,
-        };
-        CommunityModerator::leave(&mut context.pool(), &form).await?;
+        let form = CommunityModeratorForm::new(community.id, remove_mod.id);
+        CommunityActions::leave(&mut context.pool(), &form).await?;
 
         // write mod log
         let actor = self.actor.dereference(context).await?;

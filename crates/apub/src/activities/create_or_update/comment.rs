@@ -3,18 +3,10 @@ use crate::{
     check_community_deleted_or_removed,
     community::send_activity_in_community,
     generate_activity_id,
-    generate_to,
-    verify_person_in_community,
-    verify_visibility,
   },
   activity_lists::AnnouncableActivities,
   insert_received_activity,
-  mentions::MentionOrValue,
-  objects::{comment::ApubComment, community::ApubCommunity, person::ApubPerson},
-  protocol::{
-    activities::{create_or_update::note::CreateOrUpdateNote, CreateOrUpdateType},
-    InCommunity,
-  },
+  protocol::activities::{create_or_update::note::CreateOrUpdateNote, CreateOrUpdateType},
 };
 use activitypub_federation::{
   config::Data,
@@ -22,23 +14,31 @@ use activitypub_federation::{
   protocol::verification::{verify_domains_match, verify_urls_match},
   traits::{ActivityHandler, Actor, Object},
 };
-use lemmy_api_common::{
+use lemmy_api_utils::{
   build_response::send_local_notifs,
   context::LemmyContext,
-  utils::{check_post_deleted_or_removed, is_mod_or_admin},
+  utils::{check_is_mod_or_admin, check_post_deleted_or_removed},
+};
+use lemmy_apub_objects::{
+  objects::{comment::ApubComment, community::ApubCommunity, person::ApubPerson},
+  utils::{
+    functions::{generate_to, verify_person_in_community, verify_visibility},
+    mentions::MentionOrValue,
+    protocol::InCommunity,
+  },
 };
 use lemmy_db_schema::{
-  aggregates::structs::CommentAggregates,
   newtypes::{PersonId, PostOrCommentId},
   source::{
     activity::ActivitySendTargets,
-    comment::{Comment, CommentLike, CommentLikeForm},
+    comment::{Comment, CommentActions, CommentLikeForm},
     community::Community,
     person::Person,
     post::Post,
   },
   traits::{Crud, Likeable},
 };
+use lemmy_db_views_site::SiteView;
 use lemmy_utils::{
   error::{LemmyError, LemmyResult},
   utils::mention::scrape_text_for_mentions,
@@ -135,6 +135,9 @@ impl ActivityHandler for CreateOrUpdateNote {
   }
 
   async fn receive(self, context: &Data<Self::DataType>) -> LemmyResult<()> {
+    let site_view = SiteView::read_local(&mut context.pool()).await?;
+    let local_instance_id = site_view.site.instance_id;
+
     insert_received_activity(&self.id, context).await?;
     // Need to do this check here instead of Note::from_json because we need the person who
     // send the activity, not the comment author.
@@ -145,24 +148,27 @@ impl ActivityHandler for CreateOrUpdateNote {
       if distinguished != existing_comment.distinguished {
         let creator = self.actor.dereference(context).await?;
         let (post, _) = self.object.get_parents(context).await?;
-        is_mod_or_admin(&mut context.pool(), &creator, post.community_id).await?;
+        check_is_mod_or_admin(
+          &mut context.pool(),
+          creator.id,
+          post.community_id,
+          local_instance_id,
+        )
+        .await?;
       }
     }
 
     let comment = ApubComment::from_json(self.object, context).await?;
 
     // author likes their own comment by default
-    let like_form = CommentLikeForm {
-      comment_id: comment.id,
-      person_id: comment.creator_id,
-      score: 1,
-    };
-    CommentLike::like(&mut context.pool(), &like_form).await?;
+    let like_form = CommentLikeForm::new(comment.creator_id, comment.id, 1);
+    CommentActions::like(&mut context.pool(), &like_form).await?;
 
     // Calculate initial hot_rank
-    CommentAggregates::update_hot_rank(&mut context.pool(), comment.id).await?;
+    Comment::update_hot_rank(&mut context.pool(), comment.id).await?;
 
-    let do_send_email = self.kind == CreateOrUpdateType::Create;
+    let do_send_email =
+      self.kind == CreateOrUpdateType::Create && !site_view.local_site.disable_email_notifications;
     let actor = self.actor.dereference(context).await?;
 
     // Note:
@@ -181,6 +187,7 @@ impl ActivityHandler for CreateOrUpdateNote {
       do_send_email,
       context,
       None,
+      local_instance_id,
     )
     .await?;
     Ok(())

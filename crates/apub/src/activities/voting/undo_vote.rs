@@ -1,16 +1,10 @@
 use crate::{
   activities::{
     generate_activity_id,
-    verify_person_in_community,
     voting::{undo_vote_comment, undo_vote_post},
   },
   insert_received_activity,
-  objects::person::ApubPerson,
-  protocol::{
-    activities::voting::{undo_vote::UndoVote, vote::Vote},
-    InCommunity,
-  },
-  PostOrComment,
+  protocol::activities::voting::{undo_vote::UndoVote, vote::Vote},
 };
 use activitypub_federation::{
   config::Data,
@@ -18,7 +12,11 @@ use activitypub_federation::{
   protocol::verification::verify_urls_match,
   traits::{ActivityHandler, Actor},
 };
-use lemmy_api_common::context::LemmyContext;
+use lemmy_api_utils::context::LemmyContext;
+use lemmy_apub_objects::{
+  objects::{person::ApubPerson, PostOrComment},
+  utils::{functions::verify_person_in_community, protocol::InCommunity},
+};
 use lemmy_utils::error::{LemmyError, LemmyResult};
 use url::Url;
 
@@ -54,7 +52,7 @@ impl ActivityHandler for UndoVote {
   }
 
   async fn verify(&self, context: &Data<LemmyContext>) -> LemmyResult<()> {
-    let community = self.community(context).await?;
+    let community = self.object.community(context).await?;
     verify_person_in_community(&self.actor, &community, context).await?;
     verify_urls_match(self.actor.inner(), self.object.actor.inner())?;
     self.object.verify(context).await?;
@@ -66,8 +64,8 @@ impl ActivityHandler for UndoVote {
     let actor = self.actor.dereference(context).await?;
     let object = self.object.object.dereference(context).await?;
     match object {
-      PostOrComment::Post(p) => undo_vote_post(actor, &p, context).await,
-      PostOrComment::Comment(c) => undo_vote_comment(actor, &c, context).await,
+      PostOrComment::Left(p) => undo_vote_post(actor, &p, context).await,
+      PostOrComment::Right(c) => undo_vote_comment(actor, &c, context).await,
     }
   }
 }

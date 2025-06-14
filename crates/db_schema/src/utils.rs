@@ -1,6 +1,7 @@
+pub mod queries;
 pub mod uplete;
 
-use crate::{newtypes::DbUrl, schema_setup};
+use crate::newtypes::DbUrl;
 use chrono::TimeDelta;
 use deadpool::Runtime;
 use diesel::{
@@ -26,13 +27,15 @@ use diesel_async::{
     AsyncDieselConnectionManager,
     ManagerConfig,
   },
+  scoped_futures::ScopedBoxFuture,
   AsyncConnection,
 };
 use futures_util::{future::BoxFuture, FutureExt};
-use i_love_jesus::{CursorKey, PaginatedQueryBuilder};
+use i_love_jesus::{CursorKey, PaginatedQueryBuilder, SortDirection};
+use lemmy_db_schema_file::schema_setup;
 use lemmy_utils::{
-  error::{LemmyErrorExt, LemmyErrorType, LemmyResult},
-  settings::SETTINGS,
+  error::{LemmyError, LemmyErrorExt, LemmyErrorType, LemmyResult},
+  settings::{structs::Settings, SETTINGS},
   utils::validation::clean_url,
 };
 use regex::Regex;
@@ -57,8 +60,8 @@ use std::{
 use tracing::error;
 use url::Url;
 
-const FETCH_LIMIT_DEFAULT: i64 = 10;
-pub const FETCH_LIMIT_MAX: i64 = 50;
+const FETCH_LIMIT_DEFAULT: i64 = 20;
+pub const FETCH_LIMIT_MAX: usize = 50;
 pub const SITEMAP_LIMIT: i64 = 50000;
 pub const SITEMAP_DAYS: TimeDelta = TimeDelta::days(31);
 pub const RANK_DEFAULT: f64 = 0.0001;
@@ -86,6 +89,21 @@ pub async fn get_conn<'a, 'b: 'a>(pool: &'a mut DbPool<'b>) -> Result<DbConn<'a>
     DbPool::Pool(pool) => DbConn::Pool(pool.get().await.map_err(|e| QueryBuilderError(e.into()))?),
     DbPool::Conn(conn) => DbConn::Conn(conn),
   })
+}
+
+impl DbConn<'_> {
+  pub async fn run_transaction<'a, R, F>(&mut self, callback: F) -> LemmyResult<R>
+  where
+    F: for<'r> FnOnce(&'r mut AsyncPgConnection) -> ScopedBoxFuture<'a, 'r, LemmyResult<R>>
+      + Send
+      + 'a,
+    R: Send + 'a,
+  {
+    self
+      .deref_mut()
+      .transaction::<_, LemmyError, _>(callback)
+      .await
+  }
 }
 
 impl Deref for DbConn<'_> {
@@ -145,7 +163,7 @@ macro_rules! try_join_with_pool {
 
     match $pool {
       // Run concurrently with `try_join`
-      $crate::utils::DbPool::Pool(__pool) => ::futures::try_join!(
+      $crate::utils::DbPool::Pool(__pool) => ::futures_util::try_join!(
         $(async {
           let mut __dbpool = $crate::utils::DbPool::Pool(__pool);
           ($func)(&mut __dbpool).await
@@ -166,22 +184,43 @@ macro_rules! try_join_with_pool {
   }};
 }
 
-pub struct ReverseTimestampKey<K>(pub K);
+/// Necessary to be able to use cursors with the lower SQL function
+pub struct LowerKey<K>(pub K);
 
-impl<K, C> CursorKey<C> for ReverseTimestampKey<K>
+impl<K, C> CursorKey<C> for LowerKey<K>
 where
-  K: CursorKey<C, SqlType = Timestamptz>,
+  K: CursorKey<C, SqlType = sql_types::Text>,
 {
-  type SqlType = sql_types::BigInt;
-  type CursorValue = functions::reverse_timestamp_sort<K::CursorValue>;
-  type SqlValue = functions::reverse_timestamp_sort<K::SqlValue>;
+  type SqlType = sql_types::Text;
+  type CursorValue = functions::lower<K::CursorValue>;
+  type SqlValue = functions::lower<K::SqlValue>;
 
   fn get_cursor_value(cursor: &C) -> Self::CursorValue {
-    functions::reverse_timestamp_sort(K::get_cursor_value(cursor))
+    functions::lower(K::get_cursor_value(cursor))
   }
 
   fn get_sql_value() -> Self::SqlValue {
-    functions::reverse_timestamp_sort(K::get_sql_value())
+    functions::lower(K::get_sql_value())
+  }
+}
+
+/// Necessary to be able to use cursors with the subpath SQL function
+pub struct Subpath<K>(pub K);
+
+impl<K, C> CursorKey<C> for Subpath<K>
+where
+  K: CursorKey<C, SqlType = diesel_ltree::sql_types::Ltree>,
+{
+  type SqlType = diesel_ltree::sql_types::Ltree;
+  type CursorValue = diesel_ltree::subpath<K::CursorValue, i32, i32>;
+  type SqlValue = diesel_ltree::subpath<K::SqlValue, i32, i32>;
+
+  fn get_cursor_value(cursor: &C) -> Self::CursorValue {
+    diesel_ltree::subpath(K::get_cursor_value(cursor), 0, -1)
+  }
+
+  fn get_sql_value() -> Self::SqlValue {
+    diesel_ltree::subpath(K::get_sql_value(), 0, -1)
   }
 }
 
@@ -255,38 +294,16 @@ pub fn fuzzy_search(q: &str) -> String {
   format!("%{replaced}%")
 }
 
-pub fn limit_and_offset(
-  page: Option<i64>,
-  limit: Option<i64>,
-) -> Result<(i64, i64), diesel::result::Error> {
-  let page = match page {
-    Some(page) => {
-      if page < 1 {
-        return Err(QueryBuilderError("Page is < 1".into()));
-      }
-      page
-    }
-    None => 1,
-  };
-  let limit = match limit {
+pub fn limit_fetch(limit: Option<i64>) -> LemmyResult<i64> {
+  Ok(match limit {
     Some(limit) => {
-      if !(1..=FETCH_LIMIT_MAX).contains(&limit) {
-        return Err(QueryBuilderError(
-          format!("Fetch limit is > {FETCH_LIMIT_MAX}").into(),
-        ));
+      if !(1..=FETCH_LIMIT_MAX.try_into()?).contains(&limit) {
+        return Err(LemmyErrorType::InvalidFetchLimit.into());
       }
       limit
     }
     None => FETCH_LIMIT_DEFAULT,
-  };
-  let offset = limit * (page - 1);
-  Ok((limit, offset))
-}
-
-pub fn limit_and_offset_unlimited(page: Option<i64>, limit: Option<i64>) -> (i64, i64) {
-  let limit = limit.unwrap_or(FETCH_LIMIT_DEFAULT);
-  let offset = limit * (page.unwrap_or(1) - 1);
-  (limit, offset)
+  })
 }
 
 pub fn is_email_regex(test: &str) -> bool {
@@ -586,13 +603,14 @@ impl<'a, T, Args, F: Fn(DbConn<'a>, Args) -> ResultFuture<'a, Vec<T>>> ListFn<'a
 
 pub fn paginate<Q, C>(
   query: Q,
+  sort_direction: SortDirection,
   page_after: Option<C>,
   page_before_or_equal: Option<C>,
-  page_back: bool,
+  page_back: Option<bool>,
 ) -> PaginatedQueryBuilder<C, Q> {
-  let mut query = PaginatedQueryBuilder::new(query);
+  let mut query = PaginatedQueryBuilder::new(query, sort_direction);
 
-  if page_back {
+  if page_back.unwrap_or_default() {
     query = query
       .before(page_after)
       .after_or_equal(page_before_or_equal)
@@ -606,9 +624,24 @@ pub fn paginate<Q, C>(
   query
 }
 
+pub(crate) fn format_actor_url(
+  name: &str,
+  domain: &str,
+  prefix: char,
+  settings: &Settings,
+) -> LemmyResult<Url> {
+  let local_protocol_and_hostname = settings.get_protocol_and_hostname();
+  let local_hostname = &settings.hostname;
+  let url = if domain != local_hostname {
+    format!("{local_protocol_and_hostname}/{prefix}/{name}@{domain}",)
+  } else {
+    format!("{local_protocol_and_hostname}/{prefix}/{name}")
+  };
+  Ok(Url::parse(&url)?)
+}
+
 #[cfg(test)]
 mod tests {
-
   use super::*;
   use pretty_assertions::assert_eq;
 

@@ -1,16 +1,14 @@
-use crate::{
-  objects::community::ApubCommunity,
-  protocol::collections::group_followers::GroupFollowers,
-};
+use crate::protocol::collections::group_followers::GroupFollowers;
 use activitypub_federation::{
   config::Data,
   kinds::collection::CollectionType,
   protocol::verification::verify_domains_match,
   traits::Collection,
 };
-use lemmy_api_common::{context::LemmyContext, utils::generate_followers_url};
-use lemmy_db_schema::aggregates::structs::CommunityAggregates;
-use lemmy_db_views::structs::CommunityFollowerView;
+use lemmy_api_utils::{context::LemmyContext, utils::generate_followers_url};
+use lemmy_apub_objects::objects::community::ApubCommunity;
+use lemmy_db_schema::source::community::Community;
+use lemmy_db_views_community_follower::CommunityFollowerView;
 use lemmy_utils::error::LemmyError;
 use url::Url;
 
@@ -35,7 +33,7 @@ impl Collection for ApubCommunityFollower {
     Ok(GroupFollowers {
       id: generate_followers_url(&community.ap_id)?.into(),
       r#type: CollectionType::Collection,
-      total_items: community_followers as i32,
+      total_items: community_followers,
       items: vec![],
     })
   }
@@ -54,12 +52,8 @@ impl Collection for ApubCommunityFollower {
     community: &Self::Owner,
     context: &Data<Self::DataType>,
   ) -> Result<Self, Self::Error> {
-    CommunityAggregates::update_federated_followers(
-      &mut context.pool(),
-      community.id,
-      json.total_items,
-    )
-    .await?;
+    Community::update_federated_followers(&mut context.pool(), community.id, json.total_items)
+      .await?;
 
     Ok(ApubCommunityFollower(()))
   }

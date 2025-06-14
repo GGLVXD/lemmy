@@ -1,13 +1,6 @@
 use crate::{
-  activities::{
-    generate_activity_id,
-    send_lemmy_activity,
-    verify_person,
-    verify_person_in_community,
-  },
-  fetcher::user_or_community::UserOrCommunity,
+  activities::{generate_activity_id, send_lemmy_activity, verify_person},
   insert_received_activity,
-  objects::{community::ApubCommunity, person::ApubPerson},
   protocol::activities::following::{accept::AcceptFollow, follow::Follow},
 };
 use activitypub_federation::{
@@ -16,17 +9,21 @@ use activitypub_federation::{
   protocol::verification::verify_urls_match,
   traits::{ActivityHandler, Actor},
 };
-use lemmy_api_common::context::LemmyContext;
+use lemmy_api_utils::context::LemmyContext;
+use lemmy_apub_objects::{
+  objects::{community::ApubCommunity, person::ApubPerson, UserOrCommunity},
+  utils::functions::verify_person_in_community,
+};
 use lemmy_db_schema::{
   source::{
     activity::ActivitySendTargets,
-    community::{CommunityFollower, CommunityFollowerForm, CommunityFollowerState},
+    community::{CommunityActions, CommunityFollowerForm},
     instance::Instance,
-    person::{PersonFollower, PersonFollowerForm},
+    person::{PersonActions, PersonFollowerForm},
   },
   traits::Followable,
-  CommunityVisibility,
 };
+use lemmy_db_schema_file::enums::{CommunityFollowerState, CommunityVisibility};
 use lemmy_utils::error::{FederationError, LemmyError, LemmyErrorType, LemmyResult};
 use url::Url;
 
@@ -79,7 +76,7 @@ impl ActivityHandler for Follow {
   async fn verify(&self, context: &Data<LemmyContext>) -> LemmyResult<()> {
     verify_person(&self.actor, context).await?;
     let object = self.object.dereference(context).await?;
-    if let UserOrCommunity::Community(c) = object {
+    if let UserOrCommunity::Right(c) = object {
       verify_person_in_community(&self.actor, &c, context).await?;
     }
     if let Some(to) = &self.to {
@@ -89,20 +86,17 @@ impl ActivityHandler for Follow {
   }
 
   async fn receive(self, context: &Data<LemmyContext>) -> LemmyResult<()> {
+    use CommunityVisibility::*;
     insert_received_activity(&self.id, context).await?;
     let actor = self.actor.dereference(context).await?;
     let object = self.object.dereference(context).await?;
     match object {
-      UserOrCommunity::User(u) => {
-        let form = PersonFollowerForm {
-          person_id: u.id,
-          follower_id: actor.id,
-          pending: false,
-        };
-        PersonFollower::follow(&mut context.pool(), &form).await?;
+      UserOrCommunity::Left(u) => {
+        let form = PersonFollowerForm::new(u.id, actor.id, false);
+        PersonActions::follow(&mut context.pool(), &form).await?;
         AcceptFollow::send(self, context).await?;
       }
-      UserOrCommunity::Community(c) => {
+      UserOrCommunity::Right(c) => {
         if c.visibility == CommunityVisibility::Private {
           let instance = Instance::read(&mut context.pool(), actor.instance_id).await?;
           if [Some("kbin"), Some("mbin")].contains(&instance.software.as_deref()) {
@@ -110,17 +104,14 @@ impl ActivityHandler for Follow {
             return Err(FederationError::PlatformLackingPrivateCommunitySupport.into());
           }
         }
-        let state = Some(match c.visibility {
-          CommunityVisibility::Public => CommunityFollowerState::Accepted,
-          CommunityVisibility::Private => CommunityFollowerState::ApprovalRequired,
+        let follow_state = match c.visibility {
+          Public | Unlisted => CommunityFollowerState::Accepted,
+          Private => CommunityFollowerState::ApprovalRequired,
           // Dont allow following local-only community via federation.
-          CommunityVisibility::LocalOnly => return Err(LemmyErrorType::NotFound.into()),
-        });
-        let form = CommunityFollowerForm {
-          state,
-          ..CommunityFollowerForm::new(c.id, actor.id)
+          LocalOnlyPrivate | LocalOnlyPublic => return Err(LemmyErrorType::NotFound.into()),
         };
-        CommunityFollower::follow(&mut context.pool(), &form).await?;
+        let form = CommunityFollowerForm::new(c.id, actor.id, follow_state);
+        CommunityActions::follow(&mut context.pool(), &form).await?;
         if c.visibility == CommunityVisibility::Public {
           AcceptFollow::send(self, context).await?;
         }

@@ -1,5 +1,6 @@
+use super::send_activity_from_user_or_community;
 use crate::{
-  activities::{generate_activity_id, send_lemmy_activity},
+  activities::generate_activity_id,
   insert_received_activity,
   protocol::activities::following::{follow::Follow, reject::RejectFollow},
 };
@@ -9,12 +10,9 @@ use activitypub_federation::{
   protocol::verification::verify_urls_match,
   traits::{ActivityHandler, Actor},
 };
-use lemmy_api_common::context::LemmyContext;
+use lemmy_api_utils::context::LemmyContext;
 use lemmy_db_schema::{
-  source::{
-    activity::ActivitySendTargets,
-    community::{CommunityFollower, CommunityFollowerForm},
-  },
+  source::{activity::ActivitySendTargets, community::CommunityActions},
   traits::Followable,
 };
 use lemmy_utils::error::{LemmyError, LemmyResult};
@@ -35,7 +33,7 @@ impl RejectFollow {
       )?,
     };
     let inbox = ActivitySendTargets::to_inbox(person.shared_inbox_or_inbox());
-    send_lemmy_activity(context, reject, &user_or_community, inbox, true).await
+    send_activity_from_user_or_community(context, reject, user_or_community, inbox).await
   }
 }
 
@@ -68,8 +66,7 @@ impl ActivityHandler for RejectFollow {
     let person = self.object.actor.dereference(context).await?;
 
     // remove the follow
-    let form = CommunityFollowerForm::new(community.id, person.id);
-    CommunityFollower::unfollow(&mut context.pool(), &form).await?;
+    CommunityActions::unfollow(&mut context.pool(), person.id, community.id).await?;
 
     Ok(())
   }

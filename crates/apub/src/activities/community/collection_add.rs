@@ -1,18 +1,10 @@
 use crate::{
-  activities::{
-    community::send_activity_in_community,
-    generate_activity_id,
-    generate_to,
-    verify_mod_action,
-    verify_person_in_community,
-    verify_visibility,
-  },
+  activities::{community::send_activity_in_community, generate_activity_id, verify_mod_action},
   activity_lists::AnnouncableActivities,
   insert_received_activity,
-  objects::{community::ApubCommunity, person::ApubPerson, post::ApubPost},
-  protocol::{
-    activities::community::{collection_add::CollectionAdd, collection_remove::CollectionRemove},
-    InCommunity,
+  protocol::activities::community::{
+    collection_add::CollectionAdd,
+    collection_remove::CollectionRemove,
   },
 };
 use activitypub_federation::{
@@ -21,16 +13,23 @@ use activitypub_federation::{
   kinds::activity::AddType,
   traits::{ActivityHandler, Actor},
 };
-use lemmy_api_common::{
+use lemmy_api_utils::{
   context::LemmyContext,
   utils::{generate_featured_url, generate_moderators_url},
+};
+use lemmy_apub_objects::{
+  objects::{community::ApubCommunity, person::ApubPerson, post::ApubPost},
+  utils::{
+    functions::{generate_to, verify_person_in_community, verify_visibility},
+    protocol::InCommunity,
+  },
 };
 use lemmy_db_schema::{
   impls::community::CollectionType,
   newtypes::{CommunityId, PersonId},
   source::{
     activity::ActivitySendTargets,
-    community::{Community, CommunityModerator, CommunityModeratorForm},
+    community::{Community, CommunityActions, CommunityModeratorForm},
     mod_log::moderator::{ModAddCommunity, ModAddCommunityForm},
     person::Person,
     post::{Post, PostUpdateForm},
@@ -133,14 +132,11 @@ impl ActivityHandler for CollectionAdd {
         // already been added. Skip it here as it would result in a duplicate key error.
         let new_mod_id = new_mod.id;
         let moderated_communities =
-          CommunityModerator::get_person_moderated_communities(&mut context.pool(), new_mod_id)
+          CommunityActions::get_person_moderated_communities(&mut context.pool(), new_mod_id)
             .await?;
         if !moderated_communities.contains(&community.id) {
-          let form = CommunityModeratorForm {
-            community_id: community.id,
-            person_id: new_mod.id,
-          };
-          CommunityModerator::join(&mut context.pool(), &form).await?;
+          let form = CommunityModeratorForm::new(community.id, new_mod.id);
+          CommunityActions::join(&mut context.pool(), &form).await?;
 
           // write mod log
           let actor = self.actor.dereference(context).await?;

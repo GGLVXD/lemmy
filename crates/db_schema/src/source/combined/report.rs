@@ -1,11 +1,20 @@
-use crate::newtypes::{CommentReportId, PostReportId, PrivateMessageReportId, ReportCombinedId};
-#[cfg(feature = "full")]
-use crate::schema::report_combined;
+use crate::newtypes::{
+  CommentReportId,
+  CommunityReportId,
+  PostReportId,
+  PrivateMessageReportId,
+  ReportCombinedId,
+};
 use chrono::{DateTime, Utc};
 #[cfg(feature = "full")]
 use i_love_jesus::CursorKeysModule;
+#[cfg(feature = "full")]
+use lemmy_db_schema_file::schema::report_combined;
+use serde::{Deserialize, Serialize};
+use serde_with::skip_serializing_none;
 
-#[derive(PartialEq, Eq, Debug, Clone)]
+#[skip_serializing_none]
+#[derive(PartialEq, Eq, Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(
   feature = "full",
   derive(Identifiable, Queryable, Selectable, CursorKeysModule)
@@ -16,8 +25,9 @@ use i_love_jesus::CursorKeysModule;
 /// A combined reports table.
 pub struct ReportCombined {
   pub id: ReportCombinedId,
-  pub published: DateTime<Utc>,
+  pub published_at: DateTime<Utc>,
   pub post_report_id: Option<PostReportId>,
   pub comment_report_id: Option<CommentReportId>,
   pub private_message_report_id: Option<PrivateMessageReportId>,
+  pub community_report_id: Option<CommunityReportId>,
 }

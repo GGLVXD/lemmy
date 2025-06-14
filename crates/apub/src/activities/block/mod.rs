@@ -1,11 +1,4 @@
-use super::generate_to;
-use crate::{
-  objects::{community::ApubCommunity, instance::ApubSite},
-  protocol::{
-    activities::block::{block_user::BlockUser, undo_block_user::UndoBlockUser},
-    objects::{group::Group, instance::Instance},
-  },
-};
+use crate::protocol::activities::block::{block_user::BlockUser, undo_block_user::UndoBlockUser};
 use activitypub_federation::{
   config::Data,
   fetch::object_id::ObjectId,
@@ -13,17 +6,19 @@ use activitypub_federation::{
   traits::{Actor, Object},
 };
 use chrono::{DateTime, Utc};
-use lemmy_api_common::{
-  community::BanFromCommunity,
-  context::LemmyContext,
-  utils::check_expire_time,
+use lemmy_api_utils::{context::LemmyContext, utils::check_expire_time};
+use lemmy_apub_objects::{
+  objects::{community::ApubCommunity, instance::ApubSite},
+  protocol::{group::Group, instance::Instance},
+  utils::functions::generate_to,
 };
 use lemmy_db_schema::{
   newtypes::CommunityId,
-  source::{community::Community, person::Person, site::Site},
+  source::{comment::Comment, community::Community, person::Person, post::Post, site::Site},
   traits::Crud,
   utils::DbPool,
 };
+use lemmy_db_views_community::api::BanFromCommunity;
 use lemmy_utils::error::{LemmyError, LemmyResult};
 use serde::Deserialize;
 use url::Url;
@@ -39,8 +34,8 @@ pub enum SiteOrCommunity {
 #[derive(Deserialize)]
 #[serde(untagged)]
 pub enum InstanceOrGroup {
-  Instance(Instance),
-  Group(Group),
+  Instance(Box<Instance>),
+  Group(Box<Group>),
 }
 
 #[async_trait::async_trait]
@@ -78,8 +73,8 @@ impl Object for SiteOrCommunity {
 
   async fn into_json(self, data: &Data<Self::DataType>) -> LemmyResult<Self::Kind> {
     Ok(match self {
-      SiteOrCommunity::Site(i) => InstanceOrGroup::Instance(i.into_json(data).await?),
-      SiteOrCommunity::Community(c) => InstanceOrGroup::Group(c.into_json(data).await?),
+      SiteOrCommunity::Site(i) => InstanceOrGroup::Instance(Box::new(i.into_json(data).await?)),
+      SiteOrCommunity::Community(c) => InstanceOrGroup::Group(Box::new(c.into_json(data).await?)),
     })
   }
 
@@ -99,9 +94,9 @@ impl Object for SiteOrCommunity {
     Self: Sized,
   {
     Ok(match apub {
-      InstanceOrGroup::Instance(p) => SiteOrCommunity::Site(ApubSite::from_json(p, data).await?),
+      InstanceOrGroup::Instance(p) => SiteOrCommunity::Site(ApubSite::from_json(*p, data).await?),
       InstanceOrGroup::Group(n) => {
-        SiteOrCommunity::Community(ApubCommunity::from_json(n, data).await?)
+        SiteOrCommunity::Community(ApubCommunity::from_json(*n, data).await?)
       }
     })
   }
@@ -139,32 +134,27 @@ pub(crate) async fn send_ban_from_site(
   let site = SiteOrCommunity::Site(Site::read_local(&mut context.pool()).await?.into());
   let expires = check_expire_time(expires)?;
 
-  // if the action affects a local user, federate to other instances
-  if banned_user.local {
-    if ban {
-      BlockUser::send(
-        &site,
-        &banned_user.into(),
-        &moderator.into(),
-        remove_or_restore_data.unwrap_or(false),
-        reason.clone(),
-        expires,
-        &context,
-      )
-      .await
-    } else {
-      UndoBlockUser::send(
-        &site,
-        &banned_user.into(),
-        &moderator.into(),
-        remove_or_restore_data.unwrap_or(false),
-        reason.clone(),
-        &context,
-      )
-      .await
-    }
+  if ban {
+    BlockUser::send(
+      &site,
+      &banned_user.into(),
+      &moderator.into(),
+      remove_or_restore_data.unwrap_or(false),
+      reason.clone(),
+      expires,
+      &context,
+    )
+    .await
   } else {
-    Ok(())
+    UndoBlockUser::send(
+      &site,
+      &banned_user.into(),
+      &moderator.into(),
+      remove_or_restore_data.unwrap_or(false),
+      reason.clone(),
+      &context,
+    )
+    .await
   }
 }
 
@@ -178,7 +168,7 @@ pub(crate) async fn send_ban_from_community(
   let community: ApubCommunity = Community::read(&mut context.pool(), community_id)
     .await?
     .into();
-  let expires = check_expire_time(data.expires)?;
+  let expires_at = check_expire_time(data.expires_at)?;
 
   if data.ban {
     BlockUser::send(
@@ -187,7 +177,7 @@ pub(crate) async fn send_ban_from_community(
       &mod_.into(),
       data.remove_or_restore_data.unwrap_or(false),
       data.reason.clone(),
-      expires,
+      expires_at,
       &context,
     )
     .await
@@ -210,4 +200,30 @@ fn to(target: &SiteOrCommunity) -> LemmyResult<Vec<Url>> {
   } else {
     vec![public()]
   })
+}
+
+// user banned from remote instance, remove content only in communities from that
+// instance
+async fn update_removed_for_instance(
+  blocked_person: &Person,
+  site: &ApubSite,
+  removed: bool,
+  pool: &mut DbPool<'_>,
+) -> LemmyResult<()> {
+  Post::update_removed_for_creator(
+    pool,
+    blocked_person.id,
+    None,
+    Some(site.instance_id),
+    removed,
+  )
+  .await?;
+  Comment::update_removed_for_creator_and_instance(
+    pool,
+    blocked_person.id,
+    site.instance_id,
+    removed,
+  )
+  .await?;
+  Ok(())
 }

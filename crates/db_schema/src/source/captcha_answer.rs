@@ -1,6 +1,6 @@
-#[cfg(feature = "full")]
-use crate::schema::captcha_answer;
 use chrono::{DateTime, Utc};
+#[cfg(feature = "full")]
+use lemmy_db_schema_file::schema::captcha_answer;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use uuid::Uuid;
@@ -13,7 +13,7 @@ use uuid::Uuid;
 pub struct CaptchaAnswer {
   pub uuid: Uuid,
   pub answer: String,
-  pub published: DateTime<Utc>,
+  pub published_at: DateTime<Utc>,
 }
 
 #[skip_serializing_none]

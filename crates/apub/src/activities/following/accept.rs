@@ -1,5 +1,6 @@
+use super::send_activity_from_user_or_community;
 use crate::{
-  activities::{generate_activity_id, send_lemmy_activity},
+  activities::generate_activity_id,
   insert_received_activity,
   protocol::activities::following::{accept::AcceptFollow, follow::Follow},
 };
@@ -9,9 +10,9 @@ use activitypub_federation::{
   protocol::verification::verify_urls_match,
   traits::{ActivityHandler, Actor},
 };
-use lemmy_api_common::context::LemmyContext;
+use lemmy_api_utils::context::LemmyContext;
 use lemmy_db_schema::{
-  source::{activity::ActivitySendTargets, community::CommunityFollower},
+  source::{activity::ActivitySendTargets, community::CommunityActions},
   traits::Followable,
 };
 use lemmy_utils::error::{LemmyError, LemmyResult};
@@ -32,7 +33,7 @@ impl AcceptFollow {
       )?,
     };
     let inbox = ActivitySendTargets::to_inbox(person.shared_inbox_or_inbox());
-    send_lemmy_activity(context, accept, &user_or_community, inbox, true).await
+    send_activity_from_user_or_community(context, accept, user_or_community, inbox).await
   }
 }
 
@@ -66,7 +67,7 @@ impl ActivityHandler for AcceptFollow {
     // This will throw an error if no follow was requested
     let community_id = community.id;
     let person_id = person.id;
-    CommunityFollower::follow_accepted(&mut context.pool(), community_id, person_id).await?;
+    CommunityActions::follow_accepted(&mut context.pool(), community_id, person_id).await?;
 
     Ok(())
   }

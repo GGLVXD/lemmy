@@ -27,6 +27,11 @@ import {
   ListInboxResponse,
   ListInbox,
   InboxDataType,
+  GetModlogResponse,
+  GetModlog,
+  CommunityView,
+  CommentView,
+  PersonView,
 } from "lemmy-js-client";
 import { CreatePost } from "lemmy-js-client/dist/types/CreatePost";
 import { DeletePost } from "lemmy-js-client/dist/types/DeletePost";
@@ -44,9 +49,7 @@ import { Post } from "lemmy-js-client/dist/types/Post";
 import { PostResponse } from "lemmy-js-client/dist/types/PostResponse";
 import { RemovePost } from "lemmy-js-client/dist/types/RemovePost";
 import { ResolveObject } from "lemmy-js-client/dist/types/ResolveObject";
-import { ResolveObjectResponse } from "lemmy-js-client/dist/types/ResolveObjectResponse";
 import { Search } from "lemmy-js-client/dist/types/Search";
-import { SearchResponse } from "lemmy-js-client/dist/types/SearchResponse";
 import { Comment } from "lemmy-js-client/dist/types/Comment";
 import { BanPersonResponse } from "lemmy-js-client/dist/types/BanPersonResponse";
 import { BanPerson } from "lemmy-js-client/dist/types/BanPerson";
@@ -78,6 +81,8 @@ import { PostReportResponse } from "lemmy-js-client/dist/types/PostReportRespons
 import { CreatePostReport } from "lemmy-js-client/dist/types/CreatePostReport";
 import { CommentReportResponse } from "lemmy-js-client/dist/types/CommentReportResponse";
 import { CreateCommentReport } from "lemmy-js-client/dist/types/CreateCommentReport";
+import { CommunityReportResponse } from "lemmy-js-client/dist/types/CommunityReportResponse";
+import { CreateCommunityReport } from "lemmy-js-client/dist/types/CreateCommunityReport";
 import { GetPostsResponse } from "lemmy-js-client/dist/types/GetPostsResponse";
 import { GetPosts } from "lemmy-js-client/dist/types/GetPosts";
 import { GetPersonDetailsResponse } from "lemmy-js-client/dist/types/GetPersonDetailsResponse";
@@ -154,12 +159,6 @@ export async function setupLogins() {
   // Registration applications are now enabled by default, need to disable them
   let editSiteForm: EditSite = {
     registration_mode: "Open",
-    rate_limit_message: 999,
-    rate_limit_post: 999,
-    rate_limit_register: 999,
-    rate_limit_image: 999,
-    rate_limit_comment: 999,
-    rate_limit_search: 999,
   };
   await alpha.editSite(editSiteForm);
   await beta.editSite(editSiteForm);
@@ -313,23 +312,28 @@ export async function lockPost(
 export async function resolvePost(
   api: LemmyHttp,
   post: Post,
-): Promise<ResolveObjectResponse> {
+): Promise<PostView | undefined> {
   let form: ResolveObject = {
     q: post.ap_id,
   };
-  return api.resolveObject(form);
+  return api
+    .resolveObject(form)
+    .then(a => a.results.at(0))
+    .then(a => (a?.type_ == "Post" ? a : undefined));
 }
 
 export async function searchPostLocal(
   api: LemmyHttp,
   post: Post,
-): Promise<SearchResponse> {
+): Promise<PostView | undefined> {
   let form: Search = {
-    search_term: post.name,
+    q: post.name,
     type_: "Posts",
     listing_type: "All",
   };
-  return api.search(form);
+  let res = await api.search(form);
+  let first = res.results.at(0);
+  return first?.type_ == "Post" ? first : undefined;
 }
 
 /// wait for a post to appear locally without pulling it
@@ -338,10 +342,10 @@ export async function waitForPost(
   post: Post,
   checker: (t: PostView | undefined) => boolean = p => !!p,
 ) {
-  return waitUntil<PostView>(
-    () => searchPostLocal(api, post).then(p => p.results[0] as PostView),
+  return waitUntil(
+    () => searchPostLocal(api, post),
     checker,
-  );
+  ) as Promise<PostView>;
 }
 
 export async function getPost(
@@ -389,41 +393,53 @@ export async function listInbox(
 export async function resolveComment(
   api: LemmyHttp,
   comment: Comment,
-): Promise<ResolveObjectResponse> {
+): Promise<CommentView | undefined> {
   let form: ResolveObject = {
     q: comment.ap_id,
   };
-  return api.resolveObject(form);
+  return api
+    .resolveObject(form)
+    .then(a => a.results.at(0))
+    .then(a => (a?.type_ == "Comment" ? a : undefined));
 }
 
 export async function resolveBetaCommunity(
   api: LemmyHttp,
-): Promise<ResolveObjectResponse> {
+): Promise<CommunityView | undefined> {
   // Use short-hand search url
   let form: ResolveObject = {
     q: "!main@lemmy-beta:8551",
   };
-  return api.resolveObject(form);
+  return api
+    .resolveObject(form)
+    .then(a => a.results.at(0))
+    .then(a => (a?.type_ == "Community" ? a : undefined));
 }
 
 export async function resolveCommunity(
   api: LemmyHttp,
   q: string,
-): Promise<ResolveObjectResponse> {
+): Promise<CommunityView | undefined> {
   let form: ResolveObject = {
     q,
   };
-  return api.resolveObject(form);
+  return api
+    .resolveObject(form)
+    .then(a => a.results.at(0))
+    .then(a => (a?.type_ == "Community" ? a : undefined));
 }
 
 export async function resolvePerson(
   api: LemmyHttp,
   apShortname: string,
-): Promise<ResolveObjectResponse> {
+): Promise<PersonView | undefined> {
   let form: ResolveObject = {
     q: apShortname,
   };
-  return api.resolveObject(form);
+  return api
+    .resolveObject(form)
+    .then(a => a.results.at(0))
+    .then(a => (a?.type_ == "Person" ? a : undefined));
 }
 
 export async function banPersonFromSite(
@@ -469,8 +485,10 @@ export async function followCommunity(
   const res = await api.followCommunity(form);
   await waitUntil(
     () => getCommunity(api, res.community_view.community.id),
-    g =>
-      g.community_view.subscribed === (follow ? "Subscribed" : "NotSubscribed"),
+    g => {
+      let followState = g.community_view.community_actions?.follow_state;
+      return follow ? followState === "Accepted" : followState === undefined;
+    },
   );
   // wait FOLLOW_ADDITIONS_RECHECK_DELAY (there's no API to wait for this currently)
   await delay(2000);
@@ -770,7 +788,7 @@ export async function unfollowRemotes(api: LemmyHttp): Promise<MyUserInfo> {
   let my_user = await getMyUser(api);
   let remoteFollowed =
     my_user.follows.filter(c => c.community.local == false) ?? [];
-  await Promise.all(
+  await Promise.allSettled(
     remoteFollowed.map(cu => followCommunity(api, false, cu.community.id)),
   );
 
@@ -778,7 +796,7 @@ export async function unfollowRemotes(api: LemmyHttp): Promise<MyUserInfo> {
 }
 
 export async function followBeta(api: LemmyHttp): Promise<CommunityResponse> {
-  let betaCommunity = (await resolveBetaCommunity(api)).community;
+  let betaCommunity = await resolveBetaCommunity(api);
   if (betaCommunity) {
     let follow = await followCommunity(api, true, betaCommunity.community.id);
     return follow;
@@ -797,6 +815,18 @@ export async function reportPost(
     reason,
   };
   return api.createPostReport(form);
+}
+
+export async function reportCommunity(
+  api: LemmyHttp,
+  community_id: number,
+  reason: string,
+): Promise<CommunityReportResponse> {
+  let form: CreateCommunityReport = {
+    community_id,
+    reason,
+  };
+  return api.createCommunityReport(form);
 }
 
 export async function listReports(
@@ -874,7 +904,6 @@ export function listCommunityPendingFollows(
   let form: ListCommunityPendingFollows = {
     pending_only: true,
     all_communities: false,
-    page: 1,
     limit: 50,
   };
   return api.listCommunityPendingFollows(form);
@@ -901,6 +930,10 @@ export function approveCommunityPendingFollow(
   };
   return api.approveCommunityPendingFollow(form);
 }
+export function getModlog(api: LemmyHttp): Promise<GetModlogResponse> {
+  let form: GetModlog = {};
+  return api.getModlog(form);
+}
 
 export function delay(millis = 500) {
   return new Promise(resolve => setTimeout(resolve, millis));
@@ -925,11 +958,11 @@ export function randomString(length: number): string {
   return result;
 }
 
-export async function deleteAllImages(api: LemmyHttp) {
-  const imagesRes = await api.listAllMedia({
+export async function deleteAllMedia(api: LemmyHttp) {
+  const imagesRes = await api.listMediaAdmin({
     limit: imageFetchLimit,
   });
-  Promise.all(
+  Promise.allSettled(
     imagesRes.images
       .map(image => {
         const form: DeleteImageParams = {
@@ -937,19 +970,19 @@ export async function deleteAllImages(api: LemmyHttp) {
         };
         return form;
       })
-      .map(form => api.deleteImage(form)),
+      .map(form => api.deleteMediaAdmin(form)),
   );
 }
 
 export async function unfollows() {
-  await Promise.all([
+  await Promise.allSettled([
     unfollowRemotes(alpha),
     unfollowRemotes(beta),
     unfollowRemotes(gamma),
     unfollowRemotes(delta),
     unfollowRemotes(epsilon),
   ]);
-  await Promise.all([
+  await Promise.allSettled([
     purgeAllPosts(alpha),
     purgeAllPosts(beta),
     purgeAllPosts(gamma),
@@ -961,7 +994,7 @@ export async function unfollows() {
 export async function purgeAllPosts(api: LemmyHttp) {
   // The best way to get all federated items, is to find the posts
   let res = await api.getPosts({ type_: "All", limit: 50 });
-  await Promise.all(
+  await Promise.allSettled(
     Array.from(new Set(res.posts.map(p => p.post.id)))
       .map(post_id => api.purgePost({ post_id }))
       // Ignore errors

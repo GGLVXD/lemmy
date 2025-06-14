@@ -1,12 +1,11 @@
 use crate::util::LEMMY_TEST_FAST_FEDERATION;
-use async_trait::async_trait;
 use chrono::{DateTime, TimeZone, Utc};
 use lemmy_db_schema::{
   newtypes::{CommunityId, DbUrl, InstanceId},
   source::{activity::SentActivity, site::Site},
   utils::{ActualDbPool, DbPool},
 };
-use lemmy_db_views::structs::CommunityFollowerView;
+use lemmy_db_views_community_follower::CommunityFollowerView;
 use lemmy_utils::error::LemmyResult;
 use reqwest::Url;
 use std::{
@@ -38,7 +37,6 @@ static FOLLOW_ADDITIONS_RECHECK_DELAY: LazyLock<chrono::TimeDelta> = LazyLock::n
 static FOLLOW_REMOVALS_RECHECK_DELAY: LazyLock<chrono::TimeDelta> =
   LazyLock::new(|| chrono::TimeDelta::try_hours(1).expect("TimeDelta out of bounds"));
 
-#[async_trait]
 pub trait DataSource: Send + Sync {
   async fn read_site_from_instance_id(&self, instance_id: InstanceId) -> LemmyResult<Site>;
   async fn get_instance_followed_community_inboxes(
@@ -57,7 +55,6 @@ impl DbDataSource {
   }
 }
 
-#[async_trait]
 impl DataSource for DbDataSource {
   async fn read_site_from_instance_id(&self, instance_id: InstanceId) -> LemmyResult<Site> {
     Site::read_from_instance_id(&mut DbPool::Pool(&self.pool), instance_id).await
@@ -224,14 +221,14 @@ mod tests {
   use super::*;
   use lemmy_db_schema::{
     newtypes::{ActivityId, CommunityId, InstanceId, SiteId},
-    source::activity::{ActorType, SentActivity},
+    source::activity::SentActivity,
   };
+  use lemmy_db_schema_file::enums::ActorType;
   use lemmy_utils::error::LemmyResult;
   use mockall::{mock, predicate::*};
   use serde_json::json;
   mock! {
       DataSource {}
-      #[async_trait]
       impl DataSource for DataSource {
           async fn read_site_from_instance_id(&self, instance_id: InstanceId) -> LemmyResult<Site>;
           async fn get_instance_followed_community_inboxes(
@@ -257,7 +254,7 @@ mod tests {
       ap_id: Url::parse("https://example.com/activities/1")?.into(),
       data: json!({}),
       sensitive: false,
-      published: Utc::now(),
+      published_at: Utc::now(),
       send_inboxes: vec![],
       send_community_followers_of: None,
       send_all_instances: false,
@@ -279,8 +276,8 @@ mod tests {
       id: SiteId(1),
       name: "Test Site".to_string(),
       sidebar: None,
-      published: Utc::now(),
-      updated: None,
+      published_at: Utc::now(),
+      updated_at: None,
       icon: None,
       banner: None,
       description: None,
@@ -303,7 +300,7 @@ mod tests {
       ap_id: Url::parse("https://example.com/activities/1")?.into(),
       data: json!({}),
       sensitive: false,
-      published: Utc::now(),
+      published_at: Utc::now(),
       send_inboxes: vec![],
       send_community_followers_of: None,
       send_all_instances: true,
@@ -342,7 +339,7 @@ mod tests {
       ap_id: Url::parse("https://example.com/activities/1")?.into(),
       data: json!({}),
       sensitive: false,
-      published: Utc::now(),
+      published_at: Utc::now(),
       send_inboxes: vec![],
       send_community_followers_of: Some(community_id),
       send_all_instances: false,
@@ -370,7 +367,7 @@ mod tests {
       ap_id: Url::parse("https://example.com/activities/1")?.into(),
       data: json!({}),
       sensitive: false,
-      published: Utc::now(),
+      published_at: Utc::now(),
       send_inboxes: vec![
         Some(inbox_user_1.clone().into()),
         Some(inbox_user_2.clone().into()),
@@ -402,8 +399,8 @@ mod tests {
       id: SiteId(1),
       name: "Test Site".to_string(),
       sidebar: None,
-      published: Utc::now(),
-      updated: None,
+      published_at: Utc::now(),
+      updated_at: None,
       icon: None,
       banner: None,
       description: None,
@@ -435,7 +432,7 @@ mod tests {
       ap_id: Url::parse("https://example.com/activities/1")?.into(),
       data: json!({}),
       sensitive: false,
-      published: Utc::now(),
+      published_at: Utc::now(),
       send_inboxes: vec![
         Some(user1_inbox.clone().into()),
         Some(user2_inbox.clone().into()),
@@ -519,8 +516,8 @@ mod tests {
       id: SiteId(1),
       name: "Test Site".to_string(),
       sidebar: None,
-      published: Utc::now(),
-      updated: None,
+      published_at: Utc::now(),
+      updated_at: None,
       icon: None,
       banner: None,
       description: None,
@@ -550,7 +547,7 @@ mod tests {
       ap_id: Url::parse("https://example.com/activities/1")?.into(),
       data: json!({}),
       sensitive: false,
-      published: Utc::now(),
+      published_at: Utc::now(),
       send_inboxes: vec![Some(site_inbox.into())],
       send_community_followers_of: Some(community_id),
       send_all_instances: true,

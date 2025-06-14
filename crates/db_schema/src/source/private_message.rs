@@ -1,17 +1,15 @@
 use crate::newtypes::{DbUrl, PersonId, PrivateMessageId};
-#[cfg(feature = "full")]
-use crate::schema::private_message;
 use chrono::{DateTime, Utc};
+#[cfg(feature = "full")]
+use lemmy_db_schema_file::schema::private_message;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
-#[cfg(feature = "full")]
-use ts_rs::TS;
 
 #[skip_serializing_none]
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[cfg_attr(
   feature = "full",
-  derive(Queryable, Selectable, Associations, Identifiable, TS)
+  derive(Queryable, Selectable, Associations, Identifiable)
 )]
 #[cfg_attr(
   feature = "full",
@@ -19,7 +17,8 @@ use ts_rs::TS;
 ))] // Is this the right assoc?
 #[cfg_attr(feature = "full", diesel(table_name = private_message))]
 #[cfg_attr(feature = "full", diesel(check_for_backend(diesel::pg::Pg)))]
-#[cfg_attr(feature = "full", ts(export))]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(optional_fields, export))]
 /// A private message.
 pub struct PrivateMessage {
   pub id: PrivateMessageId,
@@ -28,16 +27,18 @@ pub struct PrivateMessage {
   pub content: String,
   pub deleted: bool,
   pub read: bool,
-  pub published: DateTime<Utc>,
-  #[cfg_attr(feature = "full", ts(optional))]
-  pub updated: Option<DateTime<Utc>>,
+  pub published_at: DateTime<Utc>,
+  pub updated_at: Option<DateTime<Utc>>,
   pub ap_id: DbUrl,
   pub local: bool,
   pub removed: bool,
 }
 
 #[derive(Clone, derive_new::new)]
-#[cfg_attr(feature = "full", derive(Insertable, AsChangeset))]
+#[cfg_attr(
+  feature = "full",
+  derive(Insertable, AsChangeset, Serialize, Deserialize)
+)]
 #[cfg_attr(feature = "full", diesel(table_name = private_message))]
 pub struct PrivateMessageInsertForm {
   pub creator_id: PersonId,
@@ -48,9 +49,9 @@ pub struct PrivateMessageInsertForm {
   #[new(default)]
   pub read: Option<bool>,
   #[new(default)]
-  pub published: Option<DateTime<Utc>>,
+  pub published_at: Option<DateTime<Utc>>,
   #[new(default)]
-  pub updated: Option<DateTime<Utc>>,
+  pub updated_at: Option<DateTime<Utc>>,
   #[new(default)]
   pub ap_id: Option<DbUrl>,
   #[new(default)]
@@ -58,14 +59,14 @@ pub struct PrivateMessageInsertForm {
 }
 
 #[derive(Clone, Default)]
-#[cfg_attr(feature = "full", derive(AsChangeset))]
+#[cfg_attr(feature = "full", derive(AsChangeset, Serialize, Deserialize))]
 #[cfg_attr(feature = "full", diesel(table_name = private_message))]
 pub struct PrivateMessageUpdateForm {
   pub content: Option<String>,
   pub deleted: Option<bool>,
   pub read: Option<bool>,
-  pub published: Option<DateTime<Utc>>,
-  pub updated: Option<Option<DateTime<Utc>>>,
+  pub published_at: Option<DateTime<Utc>>,
+  pub updated_at: Option<Option<DateTime<Utc>>>,
   pub ap_id: Option<DbUrl>,
   pub local: Option<bool>,
   pub removed: Option<bool>,

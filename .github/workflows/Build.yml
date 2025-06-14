@@ -1,4 +1,4 @@
-name: Build Lemmy for ARMv8 (AArch32)
+name: Build Lemmy for ARMv8 (AArch64)
 
 on:
   push:
@@ -19,24 +19,24 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y build-essential clang pkg-config libssl-dev protobuf-compiler \
-                              cmake gcc-arm-linux-gnueabihf postgresql-client
-          cargo install --force --locked bindgen-cli  # Fix for aws-lc-sys error
+                              cmake gcc-aarch64-linux-gnu postgresql-client
+          cargo install --force --locked bindgen-cli
 
-      - name: Install Rust and ARM target
+      - name: Install Rust and AArch64 target
         run: |
           rustup update stable
           rustup default stable
-          rustup target add armv7-unknown-linux-gnueabihf  # ARMv8 in AArch32 mode uses ARMv7 target
+          rustup target add aarch64-unknown-linux-gnu
 
       - name: Build Lemmy
         run: |
           # Set linker and compiler for cross-compilation
-          export CC_armv7_unknown_linux_gnueabihf=arm-linux-gnueabihf-gcc
-          export CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER=arm-linux-gnueabihf-gcc
-          cargo build --release --target armv7-unknown-linux-gnueabihf
+          export CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc
+          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+          cargo build --release --target aarch64-unknown-linux-gnu
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: lemmy-armv8-aarch32
-          path: target/armv7-unknown-linux-gnueabihf/release/lemmy
+          name: lemmy-aarch64
+          path: target/aarch64-unknown-linux-gnu/release/lemmy

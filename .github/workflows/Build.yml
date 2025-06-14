@@ -1,4 +1,4 @@
-name: Build Lemmy for ARMv7 (32-bit)
+name: Build Lemmy for ARMv8 (AArch32)
 
 on:
   push:
@@ -22,19 +22,21 @@ jobs:
                               cmake gcc-arm-linux-gnueabihf postgresql-client
           cargo install --force --locked bindgen-cli  # Fix for aws-lc-sys error
 
-      - name: Install Rust and ARMv7 target
+      - name: Install Rust and ARM target
         run: |
           rustup update stable
           rustup default stable
-          rustup target add armv7-unknown-linux-gnueabihf
+          rustup target add armv7-unknown-linux-gnueabihf  # ARMv8 in AArch32 mode uses ARMv7 target
 
       - name: Build Lemmy
         run: |
+          # Set linker and compiler for cross-compilation
+          export CC_armv7_unknown_linux_gnueabihf=arm-linux-gnueabihf-gcc
+          export CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER=arm-linux-gnueabihf-gcc
           cargo build --release --target armv7-unknown-linux-gnueabihf
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: lemmy-armv7-unknown-linux-gnueabihf
+          name: lemmy-armv8-aarch32
           path: target/armv7-unknown-linux-gnueabihf/release/lemmy
-          

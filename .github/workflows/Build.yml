@@ -1,42 +1,41 @@
-name: Build Lemmy for ARMv7 (32-bit)
+name: Build Lemmy for aarch64
 
 on:
-  push:
-    branches:
-      - main
-  pull_request:
+  workflow_dispatch:  # Allows manual triggering
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest  # GitHub provides ARM64 runners for ubuntu-latest
+    
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: true
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: |
-          sudo apt update
-          sudo apt install -y build-essential clang pkg-config libssl-dev protobuf-compiler \
-                              cmake gcc-arm-linux-gnueabihf postgresql-client
-          cargo install --force --locked bindgen-cli
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          pkg-config \
+          libssl-dev \
+          libpq-dev
 
-      - name: Install Rust and ARMv7 target
-        run: |
-          rustup update stable
-          rustup default stable
-          rustup target add armv7-unknown-linux-gnueabihf
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: stable
+        target: aarch64-unknown-linux-gnu
+        override: true
 
-      - name: Build Lemmy
-        run: |
-          export CC_armv7_unknown_linux_gnueabihf=arm-linux-gnueabihf-gcc
-          export CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER=arm-linux-gnueabihf-gcc
-          cargo build --release --target armv7-unknown-linux-gnueabihf
+    - name: Build Lemmy (release mode)
+      run: |
+        cargo build --release --target aarch64-unknown-linux-gnu
+        strip target/aarch64-unknown-linux-gnu/release/lemmy_server
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: lemmy-armv7
-          path: target/armv7-unknown-linux-gnueabihf/release/lemmy
-          
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: lemmy-aarch64-binaries
+        path: |
+          target/aarch64-unknown-linux-gnu/release/lemmy_server
+          target/aarch64-unknown-linux-gnu/release/lemmy

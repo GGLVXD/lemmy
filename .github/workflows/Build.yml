@@ -2,7 +2,7 @@ name: Build Lemmy for aarch64
 
 on:
   workflow_dispatch:  # Allows manual triggering
-
+#force build
 jobs:
   build:
     runs-on: ubuntu-latest  # GitHub provides ARM64 runners for ubuntu-latest

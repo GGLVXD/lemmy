@@ -7,7 +7,7 @@ use crate::protocol::activities::{
     lock_page::{LockPage, UndoLockPage},
     report::Report,
     resolve_report::ResolveReport,
-    update::UpdateCommunity,
+    update::Update,
   },
   create_or_update::{note_wrapper::CreateOrUpdateNoteWrapper, page::CreateOrUpdatePage},
   deletion::{delete::Delete, undo_delete::UndoDelete},
@@ -19,7 +19,7 @@ use crate::protocol::activities::{
   },
   voting::{undo_vote::UndoVote, vote::Vote},
 };
-use activitypub_federation::{config::Data, traits::ActivityHandler};
+use activitypub_federation::{config::Data, traits::Activity};
 use lemmy_api_utils::context::LemmyContext;
 use lemmy_apub_objects::{
   objects::community::ApubCommunity,
@@ -37,7 +37,7 @@ use url::Url;
 /// are handled correctly.
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(untagged)]
-#[enum_delegate::implement(ActivityHandler)]
+#[enum_delegate::implement(Activity)]
 pub(crate) enum SharedInboxActivities {
   Follow(Follow),
   AcceptFollow(AcceptFollow),
@@ -52,7 +52,7 @@ pub(crate) enum SharedInboxActivities {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(untagged)]
-#[enum_delegate::implement(ActivityHandler)]
+#[enum_delegate::implement(Activity)]
 pub enum AnnouncableActivities {
   CreateOrUpdateNoteWrapper(CreateOrUpdateNoteWrapper),
   CreateOrUpdatePost(CreateOrUpdatePage),
@@ -60,7 +60,7 @@ pub enum AnnouncableActivities {
   UndoVote(UndoVote),
   Delete(Delete),
   UndoDelete(UndoDelete),
-  UpdateCommunity(UpdateCommunity),
+  UpdateCommunity(Box<Update>),
   BlockUser(BlockUser),
   UndoBlockUser(UndoBlockUser),
   CollectionAdd(CollectionAdd),

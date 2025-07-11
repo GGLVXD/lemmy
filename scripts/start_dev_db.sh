@@ -12,13 +12,11 @@ export LEMMY_DATABASE_URL=$DATABASE_URL
 export PGDATABASE=lemmy
 
 # If cluster exists, stop the server and delete the cluster
-if [[ -d $PGDATA ]]
-then
+if [[ -d $PGDATA ]]; then
   # Only stop server if it is running
   pg_status_exit_code=0
-  (pg_ctl status > /dev/null) || pg_status_exit_code=$?
-  if [[ ${pg_status_exit_code} -ne 3 ]]
-  then
+  (pg_ctl status >/dev/null) || pg_status_exit_code=$?
+  if [[ ${pg_status_exit_code} -ne 3 ]]; then
     pg_ctl stop --silent
   fi
 
@@ -41,6 +39,9 @@ config_args=(
 
   # Don't log parameter values
   -c auto_explain.log_parameter_max_length=0
+
+  # Disable fsync, a feature that prevents corruption on crash (doesn't matter on a temporary test database) and slows things down, especially migration tests
+  -c fsync=off
 )
 
 # Create cluster

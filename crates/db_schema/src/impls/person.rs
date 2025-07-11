@@ -328,16 +328,17 @@ impl Blockable for PersonActions {
 }
 
 impl PersonActions {
-  pub async fn list_followers(
+  pub async fn follower_inboxes(
     pool: &mut DbPool<'_>,
     for_person_id: PersonId,
-  ) -> LemmyResult<Vec<Person>> {
+  ) -> LemmyResult<Vec<DbUrl>> {
     let conn = &mut get_conn(pool).await?;
     person_actions::table
       .filter(person_actions::followed_at.is_not_null())
       .inner_join(person::table.on(person_actions::person_id.eq(person::id)))
       .filter(person_actions::target_id.eq(for_person_id))
-      .select(person::all_columns)
+      .select(person::inbox_url)
+      .distinct()
       .load(conn)
       .await
       .with_lemmy_type(LemmyErrorType::NotFound)
@@ -366,6 +367,84 @@ impl PersonActions {
       .set_null(person_actions::note)
       .set_null(person_actions::noted_at)
       .get_result(conn)
+      .await
+      .with_lemmy_type(LemmyErrorType::NotFound)
+  }
+
+  pub async fn like(
+    pool: &mut DbPool<'_>,
+    person_id: PersonId,
+    target_id: PersonId,
+    like_score: i16,
+  ) -> LemmyResult<Self> {
+    let conn = &mut get_conn(pool).await?;
+
+    let (upvotes_inc, downvotes_inc) = match like_score {
+      1 => (1, 0),
+      -1 => (0, 1),
+      _ => return Err(LemmyErrorType::NotFound.into()),
+    };
+
+    let voted_at = Utc::now();
+
+    insert_into(person_actions::table)
+      .values((
+        person_actions::person_id.eq(person_id),
+        person_actions::target_id.eq(target_id),
+        person_actions::voted_at.eq(voted_at),
+        person_actions::upvotes.eq(upvotes_inc),
+        person_actions::downvotes.eq(downvotes_inc),
+      ))
+      .on_conflict((person_actions::person_id, person_actions::target_id))
+      .do_update()
+      .set((
+        person_actions::person_id.eq(person_id),
+        person_actions::target_id.eq(target_id),
+        person_actions::voted_at.eq(voted_at),
+        person_actions::upvotes.eq(person_actions::upvotes + upvotes_inc),
+        person_actions::downvotes.eq(person_actions::downvotes + downvotes_inc),
+      ))
+      .returning(Self::as_select())
+      .get_result::<Self>(conn)
+      .await
+      .with_lemmy_type(LemmyErrorType::NotFound)
+  }
+
+  /// Removes a person like. A previous_score of zero throws an error.
+  pub async fn remove_like(
+    pool: &mut DbPool<'_>,
+    person_id: PersonId,
+    target_id: PersonId,
+    previous_score: i16,
+  ) -> LemmyResult<Self> {
+    let conn = &mut get_conn(pool).await?;
+
+    let (upvotes_inc, downvotes_inc) = match previous_score {
+      1 => (-1, 0),
+      -1 => (0, -1),
+      _ => return Err(LemmyErrorType::NotFound.into()),
+    };
+    let voted_at = Utc::now();
+
+    insert_into(person_actions::table)
+      .values((
+        person_actions::person_id.eq(person_id),
+        person_actions::target_id.eq(target_id),
+        person_actions::voted_at.eq(voted_at),
+        person_actions::upvotes.eq(upvotes_inc),
+        person_actions::downvotes.eq(downvotes_inc),
+      ))
+      .on_conflict((person_actions::person_id, person_actions::target_id))
+      .do_update()
+      .set((
+        person_actions::person_id.eq(person_id),
+        person_actions::target_id.eq(target_id),
+        person_actions::voted_at.eq(voted_at),
+        person_actions::upvotes.eq(person_actions::upvotes + upvotes_inc),
+        person_actions::downvotes.eq(person_actions::downvotes + downvotes_inc),
+      ))
+      .returning(Self::as_select())
+      .get_result::<Self>(conn)
       .await
       .with_lemmy_type(LemmyErrorType::NotFound)
   }
@@ -463,8 +542,8 @@ mod tests {
     assert_eq!(person_2.id, person_follower.person_id);
     assert!(person_follower.follow_pending.is_some_and(|x| !x));
 
-    let followers = PersonActions::list_followers(pool, person_1.id).await?;
-    assert_eq!(vec![person_2], followers);
+    let followers = PersonActions::follower_inboxes(pool, person_1.id).await?;
+    assert_eq!(vec![person_2.inbox_url], followers);
 
     let unfollow =
       PersonActions::unfollow(pool, follow_form.person_id, follow_form.target_id).await?;

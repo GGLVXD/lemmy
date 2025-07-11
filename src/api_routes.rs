@@ -11,6 +11,7 @@ use lemmy_api::{
     ban::ban_from_community,
     block::user_block_community,
     follow::follow_community,
+    multi_community_follow::follow_multi_community,
     pending_follows::{
       approve::post_pending_follows_approve,
       count::get_pending_follows_count,
@@ -27,6 +28,7 @@ use lemmy_api::{
     change_password::change_password,
     change_password_after_reset::change_password_after_reset,
     donation_dialog_shown::donation_dialog_shown,
+    export_data::export_data,
     generate_totp_secret::generate_totp_secret,
     get_captcha::get_captcha,
     list_hidden::list_person_hidden,
@@ -117,6 +119,14 @@ use lemmy_api_crud::{
     list::list_custom_emojis,
     update::update_custom_emoji,
   },
+  multi_community::{
+    create::create_multi_community,
+    create_entry::create_multi_community_entry,
+    delete_entry::delete_multi_community_entry,
+    get::get_multi_community,
+    list::list_multi_communities,
+    update::update_multi_community,
+  },
   oauth_provider::{
     create::create_oauth_provider,
     delete::delete_oauth_provider,
@@ -180,9 +190,9 @@ use lemmy_routes::images::{
     upload_user_banner,
   },
 };
-use lemmy_utils::rate_limit::RateLimitCell;
+use lemmy_utils::rate_limit::RateLimit;
 
-pub fn config(cfg: &mut ServiceConfig, rate_limit: &RateLimitCell) {
+pub fn config(cfg: &mut ServiceConfig, rate_limit: &RateLimit) {
   cfg.service(
     scope("/api/v4")
       .wrap(rate_limit.message())
@@ -243,6 +253,16 @@ pub fn config(cfg: &mut ServiceConfig, rate_limit: &RateLimitCell) {
               .route("/list", get().to(get_pending_follows_list))
               .route("/approve", post().to(post_pending_follows_approve)),
           ),
+      )
+      .service(
+        scope("/multi_community")
+          .route("", post().to(create_multi_community))
+          .route("", put().to(update_multi_community))
+          .route("", get().to(get_multi_community))
+          .route("/entry", post().to(create_multi_community_entry))
+          .route("/entry", delete().to(delete_multi_community_entry))
+          .route("/list", get().to(list_multi_communities))
+          .route("/follow", post().to(follow_multi_community)),
       )
       .route("/federated_instances", get().to(get_federated_instances))
       // Post
@@ -381,6 +401,11 @@ pub fn config(cfg: &mut ServiceConfig, rate_limit: &RateLimitCell) {
               .wrap(rate_limit.import_user_settings())
               .route("/export", get().to(export_settings))
               .route("/import", post().to(import_settings)),
+          )
+          .service(
+            resource("/data/export")
+              .wrap(rate_limit.import_user_settings())
+              .route(get().to(export_data)),
           ),
       )
       // User actions

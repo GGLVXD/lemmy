@@ -81,6 +81,10 @@ impl Object for ApubCommunity {
   type Kind = Group;
   type Error = LemmyError;
 
+  fn id(&self) -> &Url {
+    self.ap_id.inner()
+  }
+
   fn last_refreshed_at(&self) -> Option<DateTime<Utc>> {
     Some(self.last_refreshed_at)
   }
@@ -105,6 +109,10 @@ impl Object for ApubCommunity {
     Ok(())
   }
 
+  fn is_deleted(&self) -> bool {
+    self.removed || self.deleted
+  }
+
   async fn into_json(self, data: &Data<Self::DataType>) -> LemmyResult<Group> {
     let community_id = self.id;
     let langs = CommunityLanguage::read(&mut data.pool(), community_id).await?;
@@ -112,7 +120,7 @@ impl Object for ApubCommunity {
 
     let group = Group {
       kind: GroupType::Group,
-      id: self.id().into(),
+      id: self.id().clone().into(),
       preferred_username: self.name.clone(),
       name: Some(self.title.clone()),
       content: self.sidebar.as_ref().map(|d| markdown_to_html(d)),
@@ -228,7 +236,8 @@ impl Object for ApubCommunity {
 
     let community: ApubCommunity = community.into();
 
-    // These collections are not necessary for Lemmy to work, so ignore errors.
+    // These collections are not necessary for Lemmy to work, so ignore errors. Reset request count
+    // to avoid fetch errors, as it needs to fetch a lot of extra data.
     if let Some(fetch_fn) = FETCH_COMMUNITY_COLLECTIONS.get() {
       fetch_fn(
         community.clone(),
@@ -242,10 +251,6 @@ impl Object for ApubCommunity {
 }
 
 impl Actor for ApubCommunity {
-  fn id(&self) -> Url {
-    self.ap_id.inner().clone()
-  }
-
   fn public_key_pem(&self) -> &str {
     &self.public_key
   }

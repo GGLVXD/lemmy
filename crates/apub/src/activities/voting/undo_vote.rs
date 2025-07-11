@@ -3,14 +3,13 @@ use crate::{
     generate_activity_id,
     voting::{undo_vote_comment, undo_vote_post},
   },
-  insert_received_activity,
   protocol::activities::voting::{undo_vote::UndoVote, vote::Vote},
 };
 use activitypub_federation::{
   config::Data,
   kinds::activity::UndoType,
   protocol::verification::verify_urls_match,
-  traits::{ActivityHandler, Actor},
+  traits::{Activity, Object},
 };
 use lemmy_api_utils::context::LemmyContext;
 use lemmy_apub_objects::{
@@ -27,19 +26,16 @@ impl UndoVote {
     context: &Data<LemmyContext>,
   ) -> LemmyResult<Self> {
     Ok(UndoVote {
-      actor: actor.id().into(),
+      actor: actor.id().clone().into(),
       object: vote,
       kind: UndoType::Undo,
-      id: generate_activity_id(
-        UndoType::Undo,
-        &context.settings().get_protocol_and_hostname(),
-      )?,
+      id: generate_activity_id(UndoType::Undo, context)?,
     })
   }
 }
 
 #[async_trait::async_trait]
-impl ActivityHandler for UndoVote {
+impl Activity for UndoVote {
   type DataType = LemmyContext;
   type Error = LemmyError;
 
@@ -60,7 +56,6 @@ impl ActivityHandler for UndoVote {
   }
 
   async fn receive(self, context: &Data<LemmyContext>) -> LemmyResult<()> {
-    insert_received_activity(&self.id, context).await?;
     let actor = self.actor.dereference(context).await?;
     let object = self.object.object.dereference(context).await?;
     match object {

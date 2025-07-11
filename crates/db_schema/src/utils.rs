@@ -32,7 +32,6 @@ use diesel_async::{
 };
 use futures_util::{future::BoxFuture, FutureExt};
 use i_love_jesus::{CursorKey, PaginatedQueryBuilder, SortDirection};
-use lemmy_db_schema_file::schema_setup;
 use lemmy_utils::{
   error::{LemmyError, LemmyErrorExt, LemmyErrorType, LemmyResult},
   settings::{structs::Settings, SETTINGS},
@@ -399,7 +398,7 @@ fn build_config_options_uri_segment(config: &str) -> LemmyResult<String> {
   Ok(url.into())
 }
 
-fn establish_connection(config: &str) -> BoxFuture<ConnectionResult<AsyncPgConnection>> {
+fn establish_connection(config: &str) -> BoxFuture<'_, ConnectionResult<AsyncPgConnection>> {
   let fut = async {
     /// Use a once_lock to create the postgres connection config, since this config never changes
     static POSTGRES_CONFIG_WITH_OPTIONS: OnceLock<String> = OnceLock::new();
@@ -494,7 +493,7 @@ pub fn build_db_pool() -> LemmyResult<ActualDbPool> {
   // provide a setup function which handles creating the connection
   let mut config = ManagerConfig::default();
   config.custom_setup = Box::new(establish_connection);
-  let manager = AsyncDieselConnectionManager::<AsyncPgConnection>::new_with_config(db_url, config);
+  let manager = AsyncDieselConnectionManager::<AsyncPgConnection>::new_with_config(&db_url, config);
   let pool = Pool::builder(manager)
     .max_size(SETTINGS.database.pool_size)
     .runtime(Runtime::Tokio1)
@@ -512,7 +511,7 @@ pub fn build_db_pool() -> LemmyResult<ActualDbPool> {
     }))
     .build()?;
 
-  schema_setup::run(schema_setup::Options::default().run())?;
+  lemmy_db_schema_setup::run(lemmy_db_schema_setup::Options::default().run(), &db_url)?;
 
   Ok(pool)
 }
@@ -638,6 +637,18 @@ pub(crate) fn format_actor_url(
     format!("{local_protocol_and_hostname}/{prefix}/{name}")
   };
   Ok(Url::parse(&url)?)
+}
+
+/// Make sure the like score is 1, or -1
+///
+/// Uses a default NotFound error, that you should map to
+/// CouldntLikeComment/CouldntLikePost.
+pub(crate) fn validate_like(like_score: i16) -> LemmyResult<()> {
+  if [-1, 1].contains(&like_score) {
+    Ok(())
+  } else {
+    Err(LemmyErrorType::NotFound.into())
+  }
 }
 
 #[cfg(test)]

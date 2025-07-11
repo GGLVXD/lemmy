@@ -14,9 +14,11 @@ use lemmy_db_schema::{
   traits::Crud,
   utils::{diesel_opt_number_update, diesel_string_update},
 };
-use lemmy_db_views_api_misc::{SaveUserSettings, SuccessResponse};
 use lemmy_db_views_local_user::LocalUserView;
-use lemmy_db_views_site::SiteView;
+use lemmy_db_views_site::{
+  api::{SaveUserSettings, SuccessResponse},
+  SiteView,
+};
 use lemmy_email::account::send_verification_email;
 use lemmy_utils::{
   error::{LemmyErrorType, LemmyResult},
@@ -162,6 +164,7 @@ pub async fn save_user_settings(
     show_upvotes: data.show_upvotes,
     show_downvotes: data.show_downvotes,
     show_upvote_percentage: data.show_upvote_percentage,
+    show_person_votes: data.show_person_votes,
     ..Default::default()
   };
 

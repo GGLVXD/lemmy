@@ -1,14 +1,13 @@
 use crate::{
   activities::{community::send_activity_in_community, generate_activity_id, verify_mod_action},
   activity_lists::AnnouncableActivities,
-  insert_received_activity,
   protocol::activities::community::collection_remove::CollectionRemove,
 };
 use activitypub_federation::{
   config::Data,
   fetch::object_id::ObjectId,
   kinds::activity::RemoveType,
-  traits::{ActivityHandler, Actor},
+  traits::{Activity, Actor, Object},
 };
 use lemmy_api_utils::{
   context::LemmyContext,
@@ -35,23 +34,20 @@ use lemmy_utils::error::{LemmyError, LemmyResult};
 use url::Url;
 
 impl CollectionRemove {
-  pub async fn send_remove_mod(
+  pub(super) async fn send_remove_mod(
     community: &ApubCommunity,
     removed_mod: &ApubPerson,
     actor: &ApubPerson,
     context: &Data<LemmyContext>,
   ) -> LemmyResult<()> {
-    let id = generate_activity_id(
-      RemoveType::Remove,
-      &context.settings().get_protocol_and_hostname(),
-    )?;
+    let id = generate_activity_id(RemoveType::Remove, context)?;
     let remove = CollectionRemove {
-      actor: actor.id().into(),
+      actor: actor.id().clone().into(),
       to: generate_to(community)?,
-      object: removed_mod.id(),
+      object: removed_mod.id().clone(),
       target: generate_moderators_url(&community.ap_id)?.into(),
       id: id.clone(),
-      cc: vec![community.id()],
+      cc: vec![community.id().clone()],
       kind: RemoveType::Remove,
     };
 
@@ -60,22 +56,19 @@ impl CollectionRemove {
     send_activity_in_community(activity, actor, community, inboxes, true, context).await
   }
 
-  pub async fn send_remove_featured_post(
+  pub(super) async fn send_remove_featured_post(
     community: &ApubCommunity,
     featured_post: &ApubPost,
     actor: &ApubPerson,
     context: &Data<LemmyContext>,
   ) -> LemmyResult<()> {
-    let id = generate_activity_id(
-      RemoveType::Remove,
-      &context.settings().get_protocol_and_hostname(),
-    )?;
+    let id = generate_activity_id(RemoveType::Remove, context)?;
     let remove = CollectionRemove {
-      actor: actor.id().into(),
+      actor: actor.id().clone().into(),
       to: generate_to(community)?,
       object: featured_post.ap_id.clone().into(),
       target: generate_featured_url(&community.ap_id)?.into(),
-      cc: vec![community.id()],
+      cc: vec![community.id().clone()],
       kind: RemoveType::Remove,
       id: id.clone(),
     };
@@ -93,7 +86,7 @@ impl CollectionRemove {
 }
 
 #[async_trait::async_trait]
-impl ActivityHandler for CollectionRemove {
+impl Activity for CollectionRemove {
   type DataType = LemmyContext;
   type Error = LemmyError;
 
@@ -114,7 +107,6 @@ impl ActivityHandler for CollectionRemove {
   }
 
   async fn receive(self, context: &Data<Self::DataType>) -> LemmyResult<()> {
-    insert_received_activity(&self.id, context).await?;
     let (community, collection_type) =
       Community::get_by_collection_url(&mut context.pool(), &self.target.into()).await?;
     match collection_type {

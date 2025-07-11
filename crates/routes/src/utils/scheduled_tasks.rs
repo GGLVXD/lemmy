@@ -3,7 +3,7 @@ use activitypub_federation::config::Data;
 use chrono::{DateTime, TimeZone, Utc};
 use clokwerk::{AsyncScheduler, TimeUnits as CTimeUnits};
 use diesel::{
-  dsl::{exists, not, IntervalDsl},
+  dsl::{count, exists, not, update, IntervalDsl},
   query_builder::AsQuery,
   sql_query,
   sql_types::{Integer, Timestamptz},
@@ -37,10 +37,13 @@ use lemmy_db_schema_file::schema::{
   federation_blocklist,
   instance,
   instance_actions,
+  local_site,
+  local_user,
   person,
   post,
   received_activity,
   sent_activity,
+  site,
 };
 use lemmy_db_views_site::SiteView;
 use lemmy_utils::error::{LemmyErrorType, LemmyResult};
@@ -53,10 +56,10 @@ pub async fn setup(context: Data<LemmyContext>) -> LemmyResult<()> {
   // https://github.com/mdsherry/clokwerk/issues/38
   let mut scheduler = AsyncScheduler::with_tz(Utc);
 
-  let context_1 = context.reset_request_count();
+  let context_1 = context.clone();
   // Every 10 minutes update hot ranks, delete expired captchas and publish scheduled posts
   scheduler.every(CTimeUnits::minutes(10)).run(move || {
-    let context = context_1.reset_request_count();
+    let context = context_1.clone();
 
     async move {
       update_hot_ranks(&mut context.pool())
@@ -95,14 +98,14 @@ pub async fn setup(context: Data<LemmyContext>) -> LemmyResult<()> {
     }
   });
 
-  let context_1 = context.clone();
+  let context_1 = context.reset_request_count();
   // Daily tasks:
   // - Overwrite deleted & removed posts and comments every day
   // - Delete old denied users
   // - Update instance software
   // - Delete old outgoing activities
   scheduler.every(CTimeUnits::days(1)).run(move || {
-    let context = context_1.clone();
+    let context = context_1.reset_request_count();
 
     async move {
       overwrite_deleted_posts_and_comments(&mut context.pool())
@@ -330,7 +333,7 @@ async fn overwrite_deleted_posts_and_comments(pool: &mut DbPool<'_>) -> LemmyRes
   Ok(())
 }
 
-/// Re-calculate the site and community active counts every 12 hours
+/// Re-calculate the site, community active counts and local user count
 async fn active_counts(pool: &mut DbPool<'_>) -> LemmyResult<()> {
   info!("Updating active site and community aggregates ...");
 
@@ -356,6 +359,29 @@ async fn active_counts(pool: &mut DbPool<'_>) -> LemmyResult<()> {
 
   let update_interactions_stmt = "update community ca set interactions_month = mv.count_ from r.community_aggregates_interactions('1 month') mv where ca.id = mv.community_id_";
   sql_query(update_interactions_stmt)
+    .execute(&mut conn)
+    .await?;
+
+  let mut conn = get_conn(pool).await?;
+
+  let user_count: i64 = local_user::table
+    .inner_join(
+      person::table.left_join(
+        instance_actions::table
+          .inner_join(instance::table.inner_join(site::table.inner_join(local_site::table))),
+      ),
+    )
+    // only count approved users
+    .filter(local_user::accepted_application)
+    // ignore banned and deleted accounts
+    .filter(instance_actions::received_ban_at.is_null())
+    .filter(not(person::deleted))
+    .select(count(local_user::id))
+    .get_result(&mut conn)
+    .await?;
+
+  update(local_site::table)
+    .set((local_site::users.eq(user_count),))
     .execute(&mut conn)
     .await?;
 
@@ -543,7 +569,7 @@ mod tests {
 
   use super::*;
   use lemmy_api_utils::request::client_builder;
-  use lemmy_db_views_site::impls::create_test_instance;
+  use lemmy_db_schema::test_data::TestData;
   use lemmy_utils::{
     error::{LemmyErrorType, LemmyResult},
     settings::structs::Settings,
@@ -576,7 +602,7 @@ mod tests {
   #[serial]
   async fn test_scheduled_tasks_no_errors() -> LemmyResult<()> {
     let context = LemmyContext::init_test_context().await;
-    let instance = create_test_instance(&mut context.pool()).await?;
+    let data = TestData::create(&mut context.pool()).await?;
 
     active_counts(&mut context.pool()).await?;
     update_hot_ranks(&mut context.pool()).await?;
@@ -588,7 +614,7 @@ mod tests {
     update_instance_software(&mut context.pool(), context.client()).await?;
     delete_expired_captcha_answers(&mut context.pool()).await?;
     publish_scheduled_posts(&context).await?;
-    Instance::delete(&mut context.pool(), instance.id).await?;
+    data.delete(&mut context.pool()).await?;
     Ok(())
   }
 }

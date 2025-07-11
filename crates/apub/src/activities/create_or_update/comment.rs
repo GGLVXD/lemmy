@@ -5,14 +5,13 @@ use crate::{
     generate_activity_id,
   },
   activity_lists::AnnouncableActivities,
-  insert_received_activity,
   protocol::activities::{create_or_update::note::CreateOrUpdateNote, CreateOrUpdateType},
 };
 use activitypub_federation::{
   config::Data,
   fetch::object_id::ObjectId,
   protocol::verification::{verify_domains_match, verify_urls_match},
-  traits::{ActivityHandler, Actor, Object},
+  traits::{Activity, Actor, Object},
 };
 use lemmy_api_utils::{
   build_response::send_local_notifs,
@@ -62,14 +61,11 @@ impl CreateOrUpdateNote {
       .await?
       .into();
 
-    let id = generate_activity_id(
-      kind.clone(),
-      &context.settings().get_protocol_and_hostname(),
-    )?;
+    let id = generate_activity_id(kind.clone(), &context)?;
     let note = ApubComment(comment).into_json(&context).await?;
 
     let create_or_update = CreateOrUpdateNote {
-      actor: person.id().into(),
+      actor: person.id().clone().into(),
       to: generate_to(&community)?,
       cc: note.cc.clone(),
       tag: note.tag.clone(),
@@ -107,7 +103,7 @@ impl CreateOrUpdateNote {
 }
 
 #[async_trait::async_trait]
-impl ActivityHandler for CreateOrUpdateNote {
+impl Activity for CreateOrUpdateNote {
   type DataType = LemmyContext;
   type Error = LemmyError;
 
@@ -138,7 +134,6 @@ impl ActivityHandler for CreateOrUpdateNote {
     let site_view = SiteView::read_local(&mut context.pool()).await?;
     let local_instance_id = site_view.site.instance_id;
 
-    insert_received_activity(&self.id, context).await?;
     // Need to do this check here instead of Note::from_json because we need the person who
     // send the activity, not the comment author.
     let existing_comment = self.object.id.dereference_local(context).await.ok();

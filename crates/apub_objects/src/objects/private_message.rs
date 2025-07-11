@@ -14,7 +14,7 @@ use activitypub_federation::{
   },
   traits::Object,
 };
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use lemmy_api_utils::{
   context::LemmyContext,
   plugins::{plugin_hook_after, plugin_hook_before},
@@ -59,8 +59,8 @@ impl Object for ApubPrivateMessage {
   type Kind = PrivateMessage;
   type Error = LemmyError;
 
-  fn last_refreshed_at(&self) -> Option<DateTime<Utc>> {
-    None
+  fn id(&self) -> &Url {
+    self.ap_id.inner()
   }
 
   async fn read_from_id(
@@ -77,6 +77,10 @@ impl Object for ApubPrivateMessage {
   async fn delete(self, _context: &Data<Self::DataType>) -> LemmyResult<()> {
     // do nothing, because pm can't be fetched over http
     Err(LemmyErrorType::NotFound.into())
+  }
+
+  fn is_deleted(&self) -> bool {
+    self.removed || self.deleted
   }
 
   async fn into_json(self, context: &Data<Self::DataType>) -> LemmyResult<PrivateMessage> {
@@ -174,8 +178,7 @@ mod tests {
     utils::test::{file_to_json_object, parse_lemmy_instance},
   };
   use assert_json_diff::assert_json_include;
-  use lemmy_db_schema::source::site::Site;
-  use lemmy_db_views_site::impls::create_test_instance;
+  use lemmy_db_schema::{source::site::Site, test_data::TestData};
   use pretty_assertions::assert_eq;
   use serial_test::serial;
 
@@ -183,7 +186,7 @@ mod tests {
     url: &Url,
     context: &Data<LemmyContext>,
   ) -> LemmyResult<(ApubPerson, ApubPerson, ApubSite)> {
-    let context2 = context.reset_request_count();
+    let context2 = context.clone();
     let lemmy_person = file_to_json_object("../apub/assets/lemmy/objects/person.json")?;
     let site = parse_lemmy_instance(&context2).await?;
     ApubPerson::verify(&lemmy_person, url, &context2).await?;
@@ -209,7 +212,7 @@ mod tests {
   #[serial]
   async fn test_parse_lemmy_pm() -> LemmyResult<()> {
     let context = LemmyContext::init_test_context().await;
-    let instance = create_test_instance(&mut context.pool()).await?;
+    let test_data = TestData::create(&mut context.pool()).await?;
     let url = Url::parse("https://enterprise.lemmy.ml/private_message/1621")?;
     let data = prepare_comment_test(&url, &context).await?;
     let json: PrivateMessage =
@@ -227,7 +230,7 @@ mod tests {
 
     DbPrivateMessage::delete(&mut context.pool(), pm_id).await?;
     cleanup(data, &context).await?;
-    Instance::delete(&mut context.pool(), instance.id).await?;
+    test_data.delete(&mut context.pool()).await?;
     Ok(())
   }
 
@@ -235,7 +238,7 @@ mod tests {
   #[serial]
   async fn test_parse_pleroma_pm() -> LemmyResult<()> {
     let context = LemmyContext::init_test_context().await;
-    let instance = create_test_instance(&mut context.pool()).await?;
+    let test_data = TestData::create(&mut context.pool()).await?;
     let url = Url::parse("https://enterprise.lemmy.ml/private_message/1621")?;
     let data = prepare_comment_test(&url, &context).await?;
     let pleroma_url = Url::parse("https://queer.hacktivis.me/objects/2")?;
@@ -249,7 +252,7 @@ mod tests {
 
     DbPrivateMessage::delete(&mut context.pool(), pm.id).await?;
     cleanup(data, &context).await?;
-    Instance::delete(&mut context.pool(), instance.id).await?;
+    test_data.delete(&mut context.pool()).await?;
     Ok(())
   }
 }

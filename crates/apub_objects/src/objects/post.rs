@@ -27,7 +27,7 @@ use activitypub_federation::{
   traits::Object,
 };
 use anyhow::anyhow;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use html2text::{from_read_with_decorator, render::TrivialDecorator};
 use lemmy_api_utils::{
   context::LemmyContext,
@@ -82,8 +82,8 @@ impl Object for ApubPost {
   type Kind = Page;
   type Error = LemmyError;
 
-  fn last_refreshed_at(&self) -> Option<DateTime<Utc>> {
-    None
+  fn id(&self) -> &Url {
+    self.ap_id.inner()
   }
 
   async fn read_from_id(
@@ -106,6 +106,10 @@ impl Object for ApubPost {
       Post::update(&mut context.pool(), self.id, &form).await?;
     }
     Ok(())
+  }
+
+  fn is_deleted(&self) -> bool {
+    self.removed || self.deleted
   }
 
   // Turn a Lemmy post into an ActivityPub page that can be sent out over the network.
@@ -299,7 +303,7 @@ impl Object for ApubPost {
     let post = Post::insert_apub(&mut context.pool(), timestamp, &form).await?;
     plugin_hook_after("after_receive_federated_post", &post)?;
     let post_ = post.clone();
-    let context_ = context.reset_request_count();
+    let context_ = context.clone();
 
     // Generates a post thumbnail in background task, because some sites can be very slow to
     // respond.

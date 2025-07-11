@@ -2,7 +2,6 @@ use super::{local_community, report_inboxes};
 use crate::{
   activities::{generate_activity_id, send_lemmy_activity},
   activity_lists::AnnouncableActivities,
-  insert_received_activity,
   protocol::activities::community::{
     announce::AnnounceActivity,
     report::{Report, ReportObject},
@@ -12,7 +11,7 @@ use activitypub_federation::{
   config::Data,
   fetch::object_id::ObjectId,
   kinds::activity::FlagType,
-  traits::{ActivityHandler, Actor},
+  traits::{Activity, Object},
 };
 use either::Either;
 use lemmy_api_utils::{
@@ -53,13 +52,10 @@ impl Report {
     context: &Data<LemmyContext>,
   ) -> LemmyResult<Self> {
     let kind = FlagType::Flag;
-    let id = generate_activity_id(
-      kind.clone(),
-      &context.settings().get_protocol_and_hostname(),
-    )?;
+    let id = generate_activity_id(kind.clone(), context)?;
     Ok(Report {
-      actor: actor.id().into(),
-      to: [receiver.id().into()],
+      actor: actor.id().clone().into(),
+      to: [receiver.id().clone().into()],
       object: ReportObject::Lemmy(object_id.clone()),
       summary: reason,
       content: None,
@@ -83,7 +79,7 @@ impl Report {
 }
 
 #[async_trait::async_trait]
-impl ActivityHandler for Report {
+impl Activity for Report {
   type DataType = LemmyContext;
   type Error = LemmyError;
 
@@ -102,7 +98,6 @@ impl ActivityHandler for Report {
   }
 
   async fn receive(self, context: &Data<Self::DataType>) -> LemmyResult<()> {
-    insert_received_activity(&self.id, context).await?;
     let actor = self.actor.dereference(context).await?;
     let reason = self.reason()?;
     match self.object.dereference(context).await? {
